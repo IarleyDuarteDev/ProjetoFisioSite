@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: fisio
+      POSTGRES_USER: fisio
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fisio-local-dev}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fisio -d fisio"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports: ["127.0.0.1:1025:1025", "127.0.0.1:8025:8025"]
+  backend:
+    build: ./backend
+    ports: ["127.0.0.1:8080:8080"]
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/fisio
+      DB_USERNAME: fisio
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-fisio-local-dev}
+      JWT_SECRET: ${JWT_SECRET:?Copie .env.example para .env e configure JWT_SECRET}
+      FRONTEND_URL: http://localhost:5173
+      SMTP_HOST: mailpit
+      DEMO_DATA: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+  frontend:
+    build: ./frontend
+    ports: ["127.0.0.1:5173:80"]
+    depends_on: [backend]
+volumes:
+  postgres-data:
