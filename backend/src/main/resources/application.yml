@@ -1,0 +1,53 @@
+spring:
+  application:
+    name: fisio-api
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 5
+      connection-timeout: 10000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: fisio
+        jdbc.time_zone: UTC
+  flyway:
+    default-schema: fisio
+    schemas: fisio
+  mail:
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:1025}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail.smtp:
+        auth: ${SMTP_AUTH:false}
+        starttls.enable: ${SMTP_STARTTLS:false}
+        connectiontimeout: 5000
+        timeout: 5000
+        writetimeout: 5000
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+server:
+  port: ${PORT:8080}
+  error:
+    include-message: never
+    include-stacktrace: never
+app:
+  jwt:
+    secret: ${JWT_SECRET}
+    issuer: fisio-api
+    duration: PT30M
+  frontend-url: ${FRONTEND_URL:http://localhost:5173}
+  clinic-zone: ${CLINIC_ZONE:America/Rio_Branco}
+  mail-from: ${MAIL_FROM:agenda@fisio.local}
+  demo-data: ${DEMO_DATA:false}
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
