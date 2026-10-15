@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowRight, CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, HeartPulse, Leaf, LogOut, MapPin, ShieldCheck, Sparkles, UserRound, X } from 'lucide-react';
+import { CalendarX, Check, ChevronLeft, ChevronRight, LogOut, X } from 'lucide-react';
 import { api, setAccessToken } from './api';
 import AuthDialog from './AuthDialog';
 import { addDays, clinicToday, dateLabel, hour, initials, sessionNames } from './format';
@@ -24,6 +24,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const cancelRef = useRef(null);
+  const confirmRef = useRef(null);
   const [cancelTarget, setCancelTarget] = useState(null);
 
   useEffect(() => {
@@ -54,6 +55,8 @@ export default function App() {
   }, [date, professional, type, tab, page, refresh, session]);
   useEffect(() => { setSelected(null); }, [date, professional, type, tab, refresh]);
   useEffect(() => { if (cancelTarget) cancelRef.current.showModal(); }, [cancelTarget]);
+  // Ao escolher um horário, leva o formulário de confirmação para a tela (importante no celular).
+  useEffect(() => { if (selected) confirmRef.current?.scrollIntoView?.({ block: 'nearest' }); }, [selected]);
 
   function login(result) { setAccessToken(result.accessToken); setSession(result); setAuth(null); setNotice(`Bem-vindo(a), ${result.usuario.nome.split(' ')[0]}! Escolha seu horário para continuar.`); }
   function logout() { setAccessToken(null); setSession(null); setTab('agendar'); setSelected(null); setRescheduling(null); setAppointments({ itens: [], totalPaginas: 0 }); setNotice('Você saiu da sua conta.'); }
@@ -80,44 +83,81 @@ export default function App() {
     } catch (err) { setError(err.message); }
     finally { setBusy(false); setCancelTarget(null); }
   }
+  const today = clinicToday();
   const days = Array.from({ length: 7 }, (_, index) => addDays(week, index));
+  const minutes = slot => Number(hour(slot.horaInicio).slice(0, 2)) * 60 + Number(hour(slot.horaInicio).slice(3));
+  const t = selected ? Math.min(1, Math.max(0, (minutes(selected) - 420) / 720)) : 0.18;
+  const title = rescheduling ? 'Escolha um novo horário' : 'Agende sua fisioterapia em poucos toques.';
+  const filtered = Boolean(type || professional);
+  const confirmLabel = busy ? 'Confirmando…' : !session ? 'Entrar para confirmar' : rescheduling ? 'Confirmar remarcação' : 'Confirmar agendamento';
   return <>
-    <div className="topline"><Leaf size={13} /> Cuidar de você é o que nos move.</div>
-    <header className="header shell">
-      <a className="brand" href="#" aria-label="Fisio Clínica, início" onClick={event => { event.preventDefault(); setTab('agendar'); }}><span className="brand-icon"><HeartPulse size={29} strokeWidth={1.6} /></span><span>fisio<span className="brand-light">clínica</span><small>MOVIMENTO & BEM-ESTAR</small></span></a>
-      <nav aria-label="Navegação principal"><button className={tab === 'agendar' ? 'nav-active' : ''} onClick={() => setTab('agendar')}>Agendar sessão</button><button className={tab === 'meus' ? 'nav-active' : ''} onClick={showMine}>Meus agendamentos</button></nav>
-      {session ? <div className="account"><span><UserRound size={16} /> {session.usuario.nome.split(' ')[0]}</span><button className="icon-button" title="Sair" aria-label="Sair da conta" onClick={logout}><LogOut size={18} /></button></div> : <button className="button outline" onClick={() => setAuth({ mode: 'login' })}><UserRound size={16} /> Entrar <ArrowRight size={15} /></button>}
-    </header>
-    <main className="shell">
-      <section className="hero">
-        <div className="hero-copy"><p className="eyebrow"><span className="little-line" /> UM TEMPO PARA VOCÊ</p><h1>Seu movimento.<br /><em>Nosso cuidado.</em></h1><p>Mais leveza na sua rotina, mais liberdade para viver.<br className="desktop-break" /> Agende sua sessão e dê o próximo passo no seu bem-estar.</p><div className="hero-foot"><ShieldCheck size={18} /><span>Cuidado individualizado</span><span className="dot">·</span><span>Agendamento simples</span></div></div>
-        <div className="hero-art" aria-hidden="true"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="art-pill pill-one" /><div className="art-pill pill-two" /><div className="art-circle" /><div className="art-stem" /><div className="art-leaf leaf-one" /><div className="art-leaf leaf-two" /><div className="art-caption"><Sparkles size={18} /><span>Pequenos passos.<br /><strong>Novas possibilidades.</strong></span></div><span className="art-note">ENCONTRE SEU EQUILÍBRIO</span></div>
-      </section>
-      {notice && <div className="notice" role="status"><Check size={18} /><span>{notice}</span><button className="icon-button" aria-label="Dispensar mensagem" onClick={() => setNotice('')}><X size={17} /></button></div>}
-      <div className="section-heading"><div><p className="eyebrow">{tab === 'agendar' ? 'SUA PRÓXIMA SESSÃO' : 'SEU ESPAÇO DE CUIDADO'}</p><h2>{tab === 'agendar' ? rescheduling ? 'Vamos encontrar um novo horário?' : 'Reserve um momento para se cuidar.' : 'Meus agendamentos'}</h2></div><span className="step-label"><span>01</span> Escolha <i /> <span>02</span> Confirme <i /> <span>03</span> Cuide-se</span></div>
-      <div className="content-tabs"><button className={tab === 'agendar' ? 'active' : ''} onClick={() => setTab('agendar')}><CalendarDays size={17} /> Agendar sessão</button><button className={tab === 'meus' ? 'active' : ''} onClick={showMine}><UserRound size={17} /> Meus agendamentos</button></div>
+    <header className="header"><div className="shell header-inner">
+      <a className="brand" href="#" aria-label="Fisio Clínica, início" onClick={event => { event.preventDefault(); setTab('agendar'); }}><i className="brand-mark" aria-hidden="true" />fisioclínica</a>
+      <nav className="main-nav" aria-label="Navegação principal">
+        <button aria-current={tab === 'agendar' ? 'page' : undefined} onClick={() => setTab('agendar')}>Agendar sessão</button>
+        <button aria-current={tab === 'meus' ? 'page' : undefined} onClick={showMine}>Meus agendamentos</button>
+      </nav>
+      {session
+        ? <div className="account"><span>{session.usuario.nome.split(' ')[0]}</span><button className="icon-button" title="Sair" aria-label="Sair da conta" onClick={logout}><LogOut size={20} /></button></div>
+        : <button className="button ghost" onClick={() => setAuth({ mode: 'login' })}>Entrar</button>}
+    </div></header>
+    <main className="shell main">
+      {notice && <div className="notice" role="status"><Check size={20} /><span>{notice}</span><button className="icon-button" aria-label="Dispensar mensagem" onClick={() => setNotice('')}><X size={18} /></button></div>}
       {error && <div className="message error" role="alert">{error}<button className="text-button" onClick={() => setRefresh(n => n + 1)}>Tentar novamente</button></div>}
-      {tab === 'agendar' ? <div className="booking-layout">
-        <section className="schedule-panel" aria-label="Horários disponíveis">
-          {rescheduling && <div className="reschedule-banner"><span>Remarcando: {dateLabel(rescheduling.horario.data)} às {hour(rescheduling.horario.horaInicio)}</span><button className="text-button" onClick={() => { setRescheduling(null); setSelected(null); }}>Desistir</button></div>}
-          <div className="filters"><label>Tipo de sessão<select value={type} onChange={event => setType(event.target.value)}><option value="">Todas as sessões</option>{Object.entries(sessionNames).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><label>Profissional<select value={professional} onChange={event => setProfessional(event.target.value)}><option value="">Todos os profissionais</option>{professionals.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}</select></label></div>
-          <div className="calendar-heading"><h3><CalendarDays size={18} /> Escolha o dia</h3><label className="date-picker"><span className="sr-only">Escolher data</span><input aria-label="Escolher data" type="date" min={clinicToday()} value={date} onChange={event => { if (event.target.value) { setDate(event.target.value); setWeek(event.target.value); } }} /></label></div>
-          <div className="week"><button className="icon-button week-arrow" aria-label="Semana anterior" disabled={week <= clinicToday()} onClick={() => setWeek(current => addDays(current, -7) < clinicToday() ? clinicToday() : addDays(current, -7))}><ChevronLeft size={20} /></button>{days.map(day => <button key={day} className={`day ${day === date ? 'selected' : ''}`} aria-pressed={day === date} aria-label={dateLabel(day, { weekday: 'long', day: 'numeric', month: 'long' })} onClick={() => setDate(day)}><span>{dateLabel(day, { weekday: 'short' }).replace('.', '')}</span><strong>{day.slice(8)}</strong><i /></button>)}<button className="icon-button week-arrow" aria-label="Próxima semana" onClick={() => setWeek(current => addDays(current, 7))}><ChevronRight size={20} /></button></div>
-          <div className="slots-heading"><h3>Horários disponíveis <span>· {dateLabel(date)}</span></h3><span className="availability"><i /> Disponível</span></div>
-          {loading ? <div className="empty" role="status"><span className="spinner" />Buscando horários para você…</div> : error ? <div className="empty"><CalendarDays size={30} /><h3>Não conseguimos carregar a agenda.</h3><p>Tente novamente em alguns instantes.</p></div> : slots.length === 0 ? <div className="empty"><CalendarDays size={30} /><h3>Um novo dia, novas possibilidades.</h3><p>Não há horários para esta seleção.<br />Experimente outra data ou ajuste os filtros.</p></div> : <div className="slots">{slots.map(slot => <button key={slot.id} className={`slot ${selected?.id === slot.id ? 'chosen' : ''}`} aria-pressed={selected?.id === slot.id} onClick={() => setSelected(slot)} disabled={busy}><div className="slot-time"><Clock3 size={16} /><strong>{hour(slot.horaInicio)}</strong><span>{hour(slot.horaFim)}</span>{selected?.id === slot.id && <Check size={16} />}</div><span className="slot-type">{sessionNames[slot.tipoSessao]}</span><div className="slot-person"><span className="avatar">{initials(slot.profissional.nome)}</span><span>{slot.profissional.nome}</span></div></button>)}</div>}
-          <p className="timezone"><Clock3 size={13} /> Os horários seguem o fuso da clínica.</p>
+      {tab === 'agendar' ? <>
+        <section className="hero">
+          <div><h1 aria-label={title}>{title.split(' ').map((word, i) => <span key={i} aria-hidden="true" style={{ '--w': i }} className={['poucos', 'toques.'].includes(word) ? 'hl' : ''}>{word}&nbsp;</span>)}</h1><p>Escolha o dia, toque no horário e confirme. Leva menos de um minuto.</p></div>
+          <div className={`arc ${selected ? 'set' : ''}`} style={{ '--t': t }} aria-hidden="true">
+            <svg viewBox="0 0 380 220"><path d="M 15 205 A 175 175 0 0 1 365 205" /><path className="arc-fill" pathLength="1" d="M 15 205 A 175 175 0 0 1 365 205" /><circle className="arc-dot" r="14" /></svg>
+            <div className="arc-label"><strong>{selected ? hour(selected.horaInicio) : '--:--'}</strong><span>{selected ? 'Seu horário' : 'Escolha um horário'}</span></div>
+          </div>
         </section>
-        <aside className="summary"><div className="summary-icon"><Leaf size={25} strokeWidth={1.5} /></div><p className="eyebrow">SEU MOMENTO DE CUIDADO</p><h3>{selected ? 'Falta só confirmar.' : 'A gente cuida de cada passo.'}</h3><p className="summary-intro">{selected ? 'Confira os detalhes da sua próxima sessão.' : 'Escolha o dia e o horário que combinam com a sua rotina. O resto é com a gente.'}</p>
-          {selected ? <form onSubmit={book}><dl className="summary-details"><div><dt>Sessão</dt><dd>{sessionNames[selected.tipoSessao]}</dd></div><div><dt>Profissional</dt><dd>{selected.profissional.nome}</dd></div><div><dt>Data e horário</dt><dd>{dateLabel(selected.data)} · {hour(selected.horaInicio)}</dd></div></dl>{!rescheduling && <label>Observações <span className="optional">(opcional)</span><textarea name="observacoes" rows={3} maxLength={1000} placeholder="Algo que gostaria que soubéssemos?" /></label>}<button className="button primary full" disabled={busy}>{busy ? 'Confirmando…' : !session ? 'Entrar para confirmar' : rescheduling ? 'Confirmar remarcação' : 'Confirmar agendamento'}<ArrowRight size={17} /></button></form> : <ol className="care-steps"><li><span>1</span><div><strong>Encontre seu horário</strong><p>Escolha a sessão e o profissional.</p></div></li><li><span>2</span><div><strong>Confirme com tranquilidade</strong><p>Entre ou crie sua conta em instantes.</p></div></li><li><span>3</span><div><strong>Venha cuidar de você</strong><p>Estaremos esperando por você.</p></div></li></ol>}
-          <div className="summary-note"><ShieldCheck size={18} /><span>Seus agendamentos ficam disponíveis na sua conta.</span></div>
-        </aside>
-      </div> : <section className="appointments-panel" aria-label="Meus agendamentos">
-        {loading ? <div className="empty" role="status"><span className="spinner" />Carregando suas sessões…</div> : !error && appointments.itens.length === 0 ? <div className="empty"><CalendarDays size={32} /><h3>Seu primeiro passo começa aqui.</h3><p>Você ainda não tem sessões agendadas.</p><button className="button primary" onClick={() => setTab('agendar')}>Encontrar um horário <ArrowRight size={16} /></button></div> : !error && <><div className="appointment-list">{appointments.itens.map(item => <article className="appointment" key={item.id}><div className="appointment-date"><strong>{item.horario.data.slice(8)}</strong><span>{dateLabel(item.horario.data, { month: 'short' })}</span><small>{item.horario.data.slice(0, 4)}</small></div><div className="appointment-info"><span className={`badge ${item.status === 'CANCELADO' ? 'cancelled' : ''}`}>{item.status === 'CONFIRMADO' ? 'Confirmado' : 'Cancelado'}</span><h3>{sessionNames[item.horario.tipoSessao]}</h3><p>{item.horario.profissional.nome} <span>·</span> {hour(item.horario.horaInicio)} – {hour(item.horario.horaFim)}</p>{item.observacoes && <p className="observation">{item.observacoes}</p>}</div>{item.status === 'CONFIRMADO' && item.horario.data >= clinicToday() && <div className="appointment-actions"><button className="button outline" onClick={() => startReschedule(item)}>Remarcar</button><button className="text-button danger" onClick={() => setCancelTarget(item)}>Cancelar</button></div>}</article>)}</div>{appointments.totalPaginas > 1 && <div className="pagination"><button className="button outline" disabled={page === 0} onClick={() => setPage(p => p - 1)}>Anterior</button><span>Página {page + 1} de {appointments.totalPaginas}</span><button className="button outline" disabled={page + 1 >= appointments.totalPaginas} onClick={() => setPage(p => p + 1)}>Próxima</button></div>}</>}
+        <div className="booking">
+          <section className="panel" aria-label="Horários disponíveis">
+            {rescheduling && <div className="reschedule-banner"><span>Remarcando a sessão de {dateLabel(rescheduling.horario.data)} às {hour(rescheduling.horario.horaInicio)}</span><button className="text-button" onClick={() => { setRescheduling(null); setSelected(null); }}>Desistir</button></div>}
+            <p className="group-label" id="type-label">Tipo de sessão</p>
+            <div className="chips" role="group" aria-labelledby="type-label"><button className="chip" aria-pressed={type === ''} onClick={() => setType('')}>Todas as sessões</button>{Object.entries(sessionNames).map(([key, label]) => <button key={key} className="chip" aria-pressed={type === key} onClick={() => setType(key)}>{label}</button>)}</div>
+            <p className="group-label" id="pro-label">Profissional</p>
+            <div className="chips" role="group" aria-labelledby="pro-label"><button className="chip" aria-pressed={professional === ''} onClick={() => setProfessional('')}>Todos</button>{professionals.map(p => <button key={p.id} className="chip" aria-pressed={professional === p.id} onClick={() => setProfessional(p.id)}><span className="avatar" aria-hidden="true">{initials(p.nome)}</span>{p.nome}</button>)}</div>
+            <div className="week-head">
+              <h2>{dateLabel(days[0], { day: 'numeric', month: 'short' })} a {dateLabel(days[6], { day: 'numeric', month: 'short' })}</h2>
+              <div><button className="icon-button" aria-label="Semana anterior" disabled={week <= today} onClick={() => setWeek(current => addDays(current, -7) < today ? today : addDays(current, -7))}><ChevronLeft size={22} /></button><button className="icon-button" aria-label="Próxima semana" onClick={() => setWeek(current => addDays(current, 7))}><ChevronRight size={22} /></button></div>
+            </div>
+            <div className="days" role="group" aria-label="Dias da semana">{days.map(day => <button key={day} className={`day ${day === date ? 'selected' : ''}`} aria-pressed={day === date} aria-label={dateLabel(day, { weekday: 'long', day: 'numeric', month: 'long' })} onClick={() => setDate(day)}><span className="day-name">{dateLabel(day, { weekday: 'short' }).replace('.', '')}</span><strong>{day.slice(8)}</strong>{day === today ? <i className="day-today" title="Hoje" /> : <i />}</button>)}</div>
+            <label className="date-input">Outra data<input type="date" min={today} value={date} onChange={event => { if (event.target.value) { setDate(event.target.value); setWeek(event.target.value); } }} /></label>
+            <div className="slots-head"><h2>{dateLabel(date, { weekday: 'long', day: 'numeric', month: 'long' })}</h2>{!loading && !error && <p>{slots.length === 1 ? '1 horário livre' : `${slots.length} horários livres`}</p>}</div>
+            {loading ? <div role="status"><span className="sr-only">Buscando horários…</span><div className="slots">{[0, 1, 2, 3, 4, 5].map(i => <div className="skeleton" key={i} />)}</div></div>
+              : error ? null
+              : slots.length === 0 ? <div className="empty"><CalendarX size={36} /><h3>Nenhum horário livre neste dia.</h3><p>Escolha outro dia{filtered ? ' ou remova os filtros' : ''}.</p>{filtered && <button className="button ghost" onClick={() => { setType(''); setProfessional(''); }}>Remover filtros</button>}</div>
+              : <div className="slots" key={`${date}-${type}-${professional}`}>{slots.map((slot, i) => <button key={slot.id} className="slot" style={{ '--i': i }} aria-pressed={selected?.id === slot.id} onClick={() => setSelected(slot)} disabled={busy}><strong>{hour(slot.horaInicio)}</strong><small>{sessionNames[slot.tipoSessao]}</small><span className="who">{slot.profissional.nome}</span></button>)}</div>}
+            <p className="timezone">Horários no fuso da clínica.</p>
+          </section>
+          {selected
+            ? <aside className="panel summary" aria-label="Resumo do agendamento"><form ref={confirmRef} onSubmit={book} key={selected.id}>
+                <h2>Falta só confirmar</h2><p className="sub">Confira os detalhes da sessão.</p>
+                <dl className="details"><div><dt>Sessão</dt><dd>{sessionNames[selected.tipoSessao]}</dd></div><div><dt>Profissional</dt><dd>{selected.profissional.nome}</dd></div><div><dt>Data e horário</dt><dd>{dateLabel(selected.data)}, {hour(selected.horaInicio)}</dd></div></dl>
+                {!rescheduling && <label><span>Observações <span className="optional">(opcional)</span></span><textarea name="observacoes" rows={3} maxLength={1000} placeholder="Algo que a gente deva saber?" /></label>}
+                <button className="button primary full" disabled={busy}>{confirmLabel}</button>
+                <button type="button" className="text-button centered" style={{ color: '#fff' }} onClick={() => setSelected(null)}>Escolher outro horário</button>
+              </form></aside>
+            : <aside className="panel summary summary-idle"><h2>Como funciona</h2><p className="sub">Três passos, sem burocracia.</p><ol><li>Escolha o dia e o horário.</li><li>Entre ou crie sua conta.</li><li>Confirme e pronto.</li></ol></aside>}
+        </div>
+      </> : <section className="appointments" aria-label="Meus agendamentos">
+        <h1>Meus agendamentos</h1>
+        {loading ? <div className="empty" role="status"><div className="skeleton" style={{ width: 280 }} />Carregando suas sessões…</div>
+          : !error && appointments.itens.length === 0 ? <div className="empty panel"><CalendarX size={36} /><h3>Você não tem sessões agendadas.</h3><button className="button primary" onClick={() => setTab('agendar')}>Encontrar um horário</button></div>
+          : !error && <>
+            <ul className="appointment-list">{appointments.itens.map((item, i) => <li className="appointment" style={{ '--i': i }} key={item.id}>
+              <div className="appt-date"><strong>{item.horario.data.slice(8)}</strong><span>{dateLabel(item.horario.data, { month: 'short' }).replace('.', '')}</span></div>
+              <div className="appt-info"><p className="appt-title">{sessionNames[item.horario.tipoSessao]}<span className={`badge ${item.status === 'CANCELADO' ? 'cancelled' : ''}`}>{item.status === 'CONFIRMADO' ? 'Confirmado' : 'Cancelado'}</span></p><p>{item.horario.profissional.nome}, {hour(item.horario.horaInicio)} às {hour(item.horario.horaFim)}, {item.horario.data.slice(0, 4)}</p>{item.observacoes && <p>{item.observacoes}</p>}</div>
+              {item.status === 'CONFIRMADO' && item.horario.data >= today && <div className="appointment-actions"><button className="button ghost" onClick={() => startReschedule(item)}>Remarcar</button><button className="text-button danger" onClick={() => setCancelTarget(item)}>Cancelar</button></div>}
+            </li>)}</ul>
+            {appointments.totalPaginas > 1 && <div className="pagination"><button className="button ghost" disabled={page === 0} onClick={() => setPage(p => p - 1)}>Anterior</button><span>Página {page + 1} de {appointments.totalPaginas}</span><button className="button ghost" disabled={page + 1 >= appointments.totalPaginas} onClick={() => setPage(p => p + 1)}>Próxima</button></div>}
+          </>}
       </section>}
-      <section className="values"><div><HeartPulse size={24} /><span><strong>Cuidado que acolhe</strong><small>Cada pessoa, uma história. Cada sessão, um cuidado.</small></span></div><div><CalendarDays size={24} /><span><strong>Sua rotina em equilíbrio</strong><small>Agende e acompanhe tudo em um só lugar.</small></span></div><div><Leaf size={24} /><span><strong>Movimento com propósito</strong><small>Mais autonomia e bem-estar no seu dia a dia.</small></span></div></section>
     </main>
-    <footer className="shell footer"><span className="footer-brand"><HeartPulse size={20} /> fisio clínica</span><span>Seu movimento merece cuidado.</span><span><MapPin size={14} /> Horário local da clínica</span></footer>
+    <footer className="shell footer">Fisio Clínica. Cada sessão no horário que cabe na sua rotina.</footer>
     {auth && <AuthDialog initialMode={auth.mode} resetToken={auth.token} onClose={() => setAuth(null)} onSuccess={login} />}
-    {cancelTarget && <dialog ref={cancelRef} className="auth-dialog" aria-labelledby="cancel-title" onCancel={event => { event.preventDefault(); if (!busy) setCancelTarget(null); }}><h2 id="cancel-title">Cancelar esta sessão?</h2><p className="muted">{sessionNames[cancelTarget.horario.tipoSessao]} em {dateLabel(cancelTarget.horario.data)}, às {hour(cancelTarget.horario.horaInicio)}. O horário será liberado para outra pessoa.</p><div className="dialog-actions"><button className="button outline" disabled={busy} onClick={() => setCancelTarget(null)}>Manter sessão</button><button className="button destructive" disabled={busy} onClick={cancel}>{busy ? 'Cancelando…' : 'Sim, cancelar'}</button></div></dialog>}
+    {cancelTarget && <dialog ref={cancelRef} className="auth-dialog" aria-labelledby="cancel-title" onCancel={event => { event.preventDefault(); if (!busy) setCancelTarget(null); }}><h2 id="cancel-title">Cancelar esta sessão?</h2><p className="muted">{sessionNames[cancelTarget.horario.tipoSessao]} em {dateLabel(cancelTarget.horario.data)}, às {hour(cancelTarget.horario.horaInicio)}. O horário será liberado para outra pessoa.</p><div className="dialog-actions"><button className="button ghost" disabled={busy} onClick={() => setCancelTarget(null)}>Manter sessão</button><button className="button destructive" disabled={busy} onClick={cancel}>{busy ? 'Cancelando…' : 'Sim, cancelar'}</button></div></dialog>}
   </>;
 }
