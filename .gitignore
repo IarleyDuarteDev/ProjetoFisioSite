@@ -11,3 +11,4 @@
 *.log
 *.iml
 .DS_Store
+.angular/
