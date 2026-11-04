@@ -1,4 +1,4 @@
-# Fisio Clínica — Spring Boot + React + PostgreSQL
+# Fisio Clínica — Spring Boot + Angular + PostgreSQL
 
 Aplicação de estudo para agendamento de uma clínica de fisioterapia. O **Java é responsável pela autenticação e por todas as regras de negócio**. O Supabase fornece somente o PostgreSQL: não há Supabase Auth, SDK do Supabase no navegador nem acesso direto do React ao banco.
 
@@ -10,8 +10,8 @@ O projeto inclui cadastro, login, recuperação de senha por e-mail, pesquisa de
 - Spring Security, JWT HS256 via Nimbus e BCrypt com custo 12.
 - Spring Data JPA, PostgreSQL e migrações Flyway.
 - Bean Validation e respostas de erro `application/problem+json`.
-- React 19, Vite, `fetch`, CSS e ícones Lucide.
-- JUnit 5, Mockito, MockMvc e PostgreSQL temporário nos testes; Vitest no frontend.
+- Angular 21 (componentes standalone e signals), HttpClient, CSS e SVG inline.
+- JUnit 5, Mockito, MockMvc e PostgreSQL temporário nos testes.
 
 ```text
 backend/
@@ -26,10 +26,12 @@ backend/
   src/main/resources/db/migration/
   src/test/java/br/com/fisioclinica/
 frontend/
-  src/App.jsx           Agenda e área do cliente
-  src/AuthDialog.jsx    Cadastro, login e recuperação
-  src/api.js            Cliente HTTP e Bearer token
-  src/format.js         Datas no fuso da clínica
+  src/app/app.ts            Estrutura da página, navegação e sessão
+  src/app/booking.ts        Quadro de horários e confirmação
+  src/app/appointments.ts   Meus agendamentos, remarcar e cancelar
+  src/app/auth-dialog.ts    Cadastro, login e recuperação
+  src/app/api.ts            Cliente HTTP e Bearer token
+  src/app/format.ts         Datas no fuso da clínica
 compose.yaml            Ambiente local completo
 docs/aprendizado.md     Roteiro para estudar o código
 ```
@@ -98,7 +100,7 @@ npm ci
 npm run dev
 ```
 
-O Vite encaminha `/api` para `http://localhost:8080`, removendo esse prefixo. A API Java não tem prefixo `/api`. Para hospedar a API em outra origem, configure `VITE_API_URL` antes de compilar e ajuste `FRONTEND_URL` no backend para permitir essa origem no CORS.
+O `ng serve` encaminha `/api` (veja `frontend/proxy.conf.json`) para `http://localhost:8080`, removendo esse prefixo. A API Java não tem prefixo `/api`. Para hospedar a API em outra origem, ajuste o proxy do Nginx (`frontend/nginx.conf`) e `FRONTEND_URL` no backend para permitir essa origem no CORS.
 
 O Flyway cria o schema **`fisio`** e suas tabelas. A conexão usada na primeira execução precisa poder criar schema e tabelas. O JPA usa `ddl-auto=validate`: alterações estruturais devem ser novas migrações, sem editar uma migração já aplicada.
 
@@ -124,14 +126,14 @@ Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_AUTH
 1. O cliente envia seu e-mail a `POST /auth/forgot-password`.
 2. A API sempre responde `202` com a mesma mensagem, exista ou não uma conta.
 3. Um token aleatório de 256 bits é enviado por e-mail; apenas seu SHA-256 é armazenado, com validade de 15 minutos.
-4. O link abre o formulário React. O token vem no fragmento `#redefinir=...`, que não é enviado ao servidor web, e é removido da barra de endereço ao abrir o formulário.
+4. O link abre o formulário Angular. O token vem no fragmento `#redefinir=...`, que não é enviado ao servidor web, e é removido da barra de endereço ao abrir o formulário.
 5. `POST /auth/reset-password` troca a senha, consome o token e incrementa a versão de autenticação do usuário, invalidando os JWTs anteriores.
 
 Há intervalo de um minuto entre envios para a mesma conta. Falhas de SMTP geram aviso no backend sem expor e-mail ou token e mantêm a resposta genérica. A aplicação não devolve o token de recuperação na API nem o imprime nos logs. No Docker local, abra o Mailpit para consultar o e-mail.
 
 ## API REST
 
-Datas: `YYYY-MM-DD`. IDs: UUID. Horários: hora local da clínica, definida por `CLINIC_ZONE`. Configure `VITE_CLINIC_ZONE` com o mesmo fuso caso altere o padrão. Tipos de sessão: `AVALIACAO`, `FISIOTERAPIA`, `PILATES`.
+Datas: `YYYY-MM-DD`. IDs: UUID. Horários: hora local da clínica, definida por `CLINIC_ZONE`. Se alterar o padrão, ajuste também `clinicZone` em `frontend/src/app/format.ts`. Tipos de sessão: `AVALIACAO`, `FISIOTERAPIA`, `PILATES`.
 
 | Método e rota | Autenticação | Entrada / comportamento |
 | --- | --- | --- |
@@ -184,7 +186,7 @@ Erros usam `status`, `title`, `detail` e, em validações de formulário, `campo
 
 - E-mail é normalizado para minúsculas e tem unicidade no banco. Senhas exigem pelo menos oito caracteres no cadastro/redefinição e respeitam o limite de 72 bytes UTF-8 do BCrypt.
 - JWT válido por 30 minutos, com assinatura, emissor e expiração verificados pelo filtro Bearer do Spring Security. A versão da autenticação é consultada no banco para permitir revogação após troca de senha.
-- JWT fica apenas em memória no React. Atualizar a página ou sair da conta exige novo login; não há refresh token. Sair limpa a sessão deste navegador; um token já copiado continua válido até expirar ou até uma redefinição de senha.
+- JWT fica apenas em memória no Angular. Atualizar a página ou sair da conta exige novo login; não há refresh token. Sair limpa a sessão deste navegador; um token já copiado continua válido até expirar ou até uma redefinição de senha.
 - Reserva usa transação e bloqueio pessimista do horário. Um índice parcial PostgreSQL garante no máximo um agendamento `CONFIRMADO` por horário, preservando os cancelados no histórico.
 - Remarcação bloqueia os horários em ordem estável e libera o anterior na mesma transação. Se o novo horário estiver ocupado, a reserva original permanece intacta.
 - Cancelamento libera o horário. Reservas canceladas ou sessões que já começaram não podem ser alteradas. Não há multa nem antecedência mínima adicional.
@@ -206,11 +208,10 @@ A suíte cobre autenticação, BCrypt, JWT adulterado, acesso a dados de outro c
 ```powershell
 cd frontend
 npm ci
-npm test
 npm run build
 ```
 
-O build Java gera `backend/target/fisio-api-0.0.1-SNAPSHOT.jar`; o build React gera `frontend/dist`. Os testes frontend verificam o cliente HTTP, expiração de sessão, tratamento de conflitos, cálculo de datas no fuso da clínica e o fluxo dos componentes de login, reserva, remarcação e cancelamento.
+O build Java gera `backend/target/fisio-api-0.0.1-SNAPSHOT.jar`; o build Angular gera `frontend/dist/fisio-web/browser`.
 
 ## Limites desta versão de estudo
 
