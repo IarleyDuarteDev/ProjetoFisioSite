@@ -18,3 +18,9 @@ export function dateLabel(iso: string, options: Intl.DateTimeFormatOptions = { d
 }
 export const hour = (value: string) => value.slice(0, 5);
 export const initials = (name: string) => name.split(' ').filter(Boolean).slice(0, 2).map(n => n[0]).join('');
+
+/** Aplica a máscara 000.000.000-00 enquanto a pessoa digita. */
+export function formatCpf(value: string): string {
+  const d = value.replace(/\D/g, '').slice(0, 11);
+  return d.replace(/^(\d{3})(\d)/, '$1.$2').replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3').replace(/\.(\d{3})(\d)/, '.$1-$2');
+}

@@ -1,6 +1,7 @@
 import { Component, ElementRef, afterNextRender, inject, input, linkedSignal, output, signal, viewChild } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { Api, Session } from './api';
+import { formatCpf } from './format';
 import { ICONS } from './icons';
 
 export type AuthMode = 'login' | 'register' | 'forgot' | 'reset';
@@ -18,6 +19,7 @@ export type AuthMode = 'login' | 'register' | 'forgot' | 'reset';
       <form (submit)="submit($event)">
         @if (mode() === 'register') { <label class="field"><span>Nome completo</span><input name="nome" required maxlength="120" autocomplete="name" placeholder="Como podemos chamar você?" /></label> }
         @if (mode() !== 'reset') { <label class="field"><span>E-mail</span><input name="email" type="email" required maxlength="254" autocomplete="email" placeholder="voce@exemplo.com" /></label> }
+        @if (mode() === 'register') { <label class="field"><span>CPF</span><input name="cpf" required inputmode="numeric" maxlength="14" autocomplete="off" placeholder="000.000.000-00" (input)="maskCpf($event)" /></label> }
         @if (mode() !== 'forgot') { <label class="field"><span>{{ mode() === 'reset' ? 'Nova senha' : 'Senha' }}</span><input name="senha" type="password" required minlength="8" maxlength="72" [attr.autocomplete]="mode() === 'login' ? 'current-password' : 'new-password'" placeholder="Pelo menos 8 caracteres" /></label> }
         @if (error()) { <p class="alert" role="alert">{{ error() }}</p> }
         @if (message()) { <p class="okmsg" role="status">{{ message() }}</p> }
@@ -44,6 +46,7 @@ export class AuthDialog {
 
   constructor() { afterNextRender(() => this.dlg().nativeElement.showModal()); }
   go(m: AuthMode) { this.mode.set(m); this.error.set(''); this.message.set(''); }
+  maskCpf(event: Event) { const el = event.target as HTMLInputElement; el.value = formatCpf(el.value); }
   close() { if (!this.busy()) this.closed.emit(); }
 
   async submit(event: Event) {
