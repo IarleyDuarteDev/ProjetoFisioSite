@@ -1,9 +1,9 @@
 import { Component, ElementRef, computed, effect, inject, input, linkedSignal, output, signal, viewChild } from '@angular/core';
 import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { catchError, firstValueFrom, map, of, startWith, switchMap } from 'rxjs';
-import { Api, ApiError, Appointment, Pro, Slot } from './api';
+import { Api, ApiError, Appointment, Pro, Slot, Usuario } from './api';
 import { ICONS } from './icons';
-import { addDays, clinicToday, dateLabel, hour, initials, sessionBand, sessionNames } from './format';
+import { addDays, clinicToday, dateLabel, formatCpf, hour, initials, sessionBand, sessionNames } from './format';
 
 @Component({
   selector: 'app-booking',
@@ -79,6 +79,7 @@ import { addDays, clinicToday, dateLabel, hour, initials, sessionBand, sessionNa
             <div><dt>Profissional</dt><dd>{{ s.profissional.nome }}</dd></div>
             <div><dt>Data e horário</dt><dd>{{ label(s.data) }}, {{ hr(s.horaInicio) }}</dd></div>
           </dl>
+          @if (!rescheduling() && cpfPendente) { <label class="field"><span>CPF (necessário para agendar)</span><input name="cpf" required inputmode="numeric" maxlength="14" autocomplete="off" placeholder="000.000.000-00" (input)="maskCpf($event)" /></label> }
           @if (!rescheduling()) { <label class="field"><span>Observações (opcional)</span><textarea name="observacoes" rows="3" maxlength="1000" placeholder="Algo que a gente deva saber?"></textarea></label> }
           @if (msg()) { <p class="alert" role="alert">{{ msg() }}</p> }
           <div class="actions"><button type="button" class="btn btn--line" (click)="selected.set(null)">Voltar</button><button class="btn" [disabled]="busy()">{{ busy() ? 'Confirmando…' : !api.session() ? 'Entrar para confirmar' : rescheduling() ? 'Confirmar remarcação' : 'Confirmar agendamento' }}</button></div>
@@ -145,6 +146,8 @@ export class Booking {
   label(d: string) { return dateLabel(d); }
   shift(days: number) { this.week.update(w => { const next = addDays(w, days); return next < this.today ? this.today : next; }); }
   pick(value: string) { if (value) { this.date.set(value); this.week.set(value); } }
+  protected get cpfPendente() { return this.api.session()?.usuario.cpfPendente === true; }
+  maskCpf(event: Event) { const el = event.target as HTMLInputElement; el.value = formatCpf(el.value); }
   clear() { this.type.set(''); this.pro.set(''); }
   choose(s: Slot) { this.msg.set(''); this.selected.set(s); }
 
@@ -157,6 +160,11 @@ export class Booking {
     const notes = ((event.target as HTMLFormElement).elements.namedItem('observacoes') as HTMLTextAreaElement | null)?.value ?? '';
     this.busy.set(true); this.msg.set('');
     try {
+      if (!r && this.api.session()?.usuario.cpfPendente) {
+        const cpf = ((event.target as HTMLFormElement).elements.namedItem('cpf') as HTMLInputElement | null)?.value ?? '';
+        const usuario = await firstValueFrom(this.api.request<Usuario>('PUT', '/auth/cpf', { cpf }));
+        this.api.session.update(s => (s ? { ...s, usuario } : s));
+      }
       await firstValueFrom(r ? this.api.request('PUT', `/agendamentos/${r.id}`, { acao: 'REMARCAR', novoHorarioId: s.id }) : this.api.request('POST', '/agendamentos', { horarioId: s.id, observacoes: notes }));
       this.selected.set(null);
       this.booked.emit(r ? 'Sessão remarcada! Seu novo horário está confirmado.' : 'Agendamento confirmado! Seu próximo passo para se sentir melhor está marcado.');

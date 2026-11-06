@@ -6,6 +6,7 @@ import br.com.fisioclinica.model.*;
 import br.com.fisioclinica.repository.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.*;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.*;
@@ -41,7 +42,10 @@ public class AgendaService {
         var horario = bloquear(dto.horarioId());
         exigirDisponivel(horario);
         var reserva = new Agendamento();
-        reserva.setCliente(usuarios.getReferenceById(clienteId));
+        var cliente = usuarios.findById(clienteId).orElseThrow(() -> ApiException.notFound("Conta não encontrada."));
+        if (cliente.getPapel() == Papel.CLIENTE && cliente.getCpfHash() == null)
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "Informe seu CPF para agendar.");
+        reserva.setCliente(cliente);
         reserva.setHorario(horario);
         reserva.setObservacoes(dto.observacoes());
         horario.setStatus(StatusHorario.RESERVADO);
