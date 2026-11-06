@@ -218,3 +218,11 @@ O build Java gera `backend/target/fisio-api-0.0.1-SNAPSHOT.jar`; o build Angular
 Antes de disponibilizar para clientes reais, configure HTTPS e o SMTP, aplique limites de requisições nos endpoints de autenticação no proxy/gateway e defina a operação administrativa da agenda. A proteção contra abuso distribuído, confirmação de e-mail, papéis administrativos e trilha de auditoria ficam para uma próxima etapa. Observações não devem ser usadas como prontuário clínico.
 
 Comece o estudo pelo [roteiro de aprendizado](docs/aprendizado.md). As credenciais reais do Supabase e do provedor de e-mail precisam ser fornecidas no seu ambiente; os arquivos de exemplo não contêm credenciais de produção.
+
+## Segurança, CPF e administrador
+
+- **CPF:** obrigatório no cadastro, validado pelos dígitos e único por conta. Fica cifrado (AES-GCM) no banco, com um hash com chave só para barrar duplicidade, e a API só o devolve mascarado. A chave é `CPF_KEY` (gere uma aleatória; não troque depois de ter usuários nem publique). Contas anteriores informam o CPF no próximo agendamento.
+- **Administrador:** defina `ADMIN_EMAIL`. Ao iniciar, o servidor cria ou promove essa conta, troca a senha por uma aleatória e derruba sessões antigas. Quem controla a caixa de e-mail define a senha em "Esqueci minha senha". O papel fica no banco e as rotas `/admin/**` exigem `ADMIN` no servidor.
+- **Tentativas de login:** 5 erros seguidos para o mesmo e-mail bloqueiam novas tentativas por 15 minutos (o controle fica na memória e reinicia com o servidor).
+- **Swagger:** desligado por padrão. Ative com `SWAGGER_ENABLED=true` apenas em desenvolvimento.
+- **Nginx:** envia CSP, Permissions-Policy e X-Forwarded-For. Em produção, use HTTPS e ative o HSTS indicado em `frontend/nginx.conf`.

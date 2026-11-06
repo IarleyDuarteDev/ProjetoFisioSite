@@ -23,33 +23,61 @@ public class AuthService {
     private final TokenService tokens;
     private final EmailService emails;
     private final Clock clock;
+    private final CpfCofre cofre;
+    private final LimitadorTentativas limitador;
     private final String dummyHash;
     private final SecureRandom random = new SecureRandom();
 
     public AuthService(UsuarioRepository usuarios, RecuperacaoSenhaRepository recuperacoes,
-                       PasswordEncoder encoder, TokenService tokens, EmailService emails, Clock clock) {
+                       PasswordEncoder encoder, TokenService tokens, EmailService emails, Clock clock,
+                       CpfCofre cofre, LimitadorTentativas limitador) {
         this.usuarios = usuarios; this.recuperacoes = recuperacoes; this.encoder = encoder;
         this.tokens = tokens; this.emails = emails; this.clock = clock;
+        this.cofre = cofre; this.limitador = limitador;
         this.dummyHash = encoder.encode(UUID.randomUUID().toString());
     }
     @Transactional
     public Sessao cadastrar(Cadastro dto) {
         validarSenha(dto.senha());
         String email = normalizarEmail(dto.email());
-        if (usuarios.existsByEmail(email)) throw ApiException.conflict("Este e-mail já está cadastrado.");
+        String cpf = cpfValido(dto.cpf());
+        String cpfHash = cofre.hash(cpf);
+        if (usuarios.existsByEmail(email) || usuarios.existsByCpfHash(cpfHash))
+            throw ApiException.conflict("Este e-mail ou CPF já está cadastrado.");
         var usuario = new Usuario();
         usuario.setNome(dto.nome().strip());
         usuario.setEmail(email);
+        usuario.setCpfCifrado(cofre.cifrar(cpf));
+        usuario.setCpfHash(cpfHash);
         usuario.setSenhaHash(encoder.encode(dto.senha()));
         return tokens.criar(usuarios.saveAndFlush(usuario));
     }
     @Transactional(readOnly = true)
     public Sessao login(Login dto) {
         validarSenha(dto.senha());
-        var usuario = usuarios.findByEmail(normalizarEmail(dto.email()));
+        String email = normalizarEmail(dto.email());
+        String chave = "login:" + email;
+        limitador.exigir(chave);
+        var usuario = usuarios.findByEmail(email);
         boolean valid = encoder.matches(dto.senha(), usuario.map(Usuario::getSenhaHash).orElse(dummyHash));
-        if (usuario.isEmpty() || !valid) throw new ApiException(HttpStatus.UNAUTHORIZED, "E-mail ou senha incorretos.");
+        if (usuario.isEmpty() || !valid) {
+            limitador.falha(chave);
+            throw new ApiException(HttpStatus.UNAUTHORIZED, "E-mail ou senha incorretos.");
+        }
+        limitador.sucesso(chave);
         return tokens.criar(usuario.get());
+    }
+    /** Contas antigas, sem CPF, informam o CPF uma única vez; depois ele não pode ser trocado por aqui. */
+    @Transactional
+    public Cliente informarCpf(UUID usuarioId, InformarCpf dto) {
+        String cpf = cpfValido(dto.cpf());
+        var usuario = usuarios.findLockedById(usuarioId).orElseThrow(() -> ApiException.notFound("Conta não encontrada."));
+        if (usuario.getCpfHash() != null) throw ApiException.conflict("O CPF desta conta já foi informado.");
+        String cpfHash = cofre.hash(cpf);
+        if (usuarios.existsByCpfHash(cpfHash)) throw ApiException.conflict("Este CPF já está vinculado a outra conta.");
+        usuario.setCpfCifrado(cofre.cifrar(cpf));
+        usuario.setCpfHash(cpfHash);
+        return Cliente.from(usuario);
     }
     @Transactional
     public void recuperar(Recuperar dto) {
@@ -85,6 +113,11 @@ public class AuthService {
         usuario.setSenhaHash(encoder.encode(dto.novaSenha()));
         usuario.setTokenVersion(usuario.getTokenVersion() + 1);
         recuperacoes.delete(reset);
+    }
+    private static String cpfValido(String informado) {
+        String cpf = Cpf.normalizar(informado);
+        if (!Cpf.valido(cpf)) throw ApiException.badRequest("Informe um CPF válido.");
+        return cpf;
     }
     public static String normalizarEmail(String email) { return email.strip().toLowerCase(Locale.ROOT); }
     private static void validarSenha(String senha) {
