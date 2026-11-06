@@ -44,6 +44,7 @@ class ApiIntegrationTest {
         registry.add("app.jwt.secret", () -> "integration-tests-only-secret-with-at-least-32-bytes");
         registry.add("app.cpf.key", () -> "integration-tests-only-cpf-key-with-at-least-32-bytes");
         registry.add("app.demo-data", () -> false);
+        registry.add("springdoc.api-docs.enabled", () -> true); // desligada por padrão; o teste do esquema Bearer precisa dela
     }
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper mapper;
