@@ -1,5 +1,6 @@
 package br.com.fisioclinica;
 
+import br.com.fisioclinica.service.Cpf;
 import br.com.fisioclinica.dto.AgendaDtos.Criar;
 import br.com.fisioclinica.exception.ApiException;
 import br.com.fisioclinica.model.*;
@@ -41,6 +42,7 @@ class ApiIntegrationTest {
         registry.add("spring.datasource.username", () -> "postgres");
         registry.add("spring.datasource.password", () -> "postgres");
         registry.add("app.jwt.secret", () -> "integration-tests-only-secret-with-at-least-32-bytes");
+        registry.add("app.cpf.key", () -> "integration-tests-only-cpf-key-with-at-least-32-bytes");
         registry.add("app.demo-data", () -> false);
     }
     @Autowired MockMvc mvc;
@@ -72,8 +74,13 @@ class ApiIntegrationTest {
     }
     JsonNode cadastrar(String email) throws Exception {
         return json(mvc.perform(post("/auth/register").contentType(MediaType.APPLICATION_JSON)
-                .content(mapper.writeValueAsString(Map.of("nome", "Cliente Teste", "email", email, "senha", "senha-segura-123"))))
+                .content(mapper.writeValueAsString(Map.of("nome", "Cliente Teste", "email", email, "cpf", cpfDe(email), "senha", "senha-segura-123"))))
                 .andExpect(status().isCreated()).andReturn());
+    }
+    /** CPF válido e estável, gerado a partir de um texto, para cada usuário de teste. */
+    static String cpfDe(String seed) {
+        String base = String.valueOf(100_000_000 + Math.floorMod(seed.toLowerCase().hashCode(), 800_000_000));
+        return base + Cpf.digitos(base);
     }
     JsonNode json(MvcResult result) throws Exception { return mapper.readTree(result.getResponse().getContentAsString()); }
     String bearer(JsonNode session) { return "Bearer " + session.get("accessToken").asText(); }
@@ -95,13 +102,13 @@ class ApiIntegrationTest {
     }
     @Test void rejeitaCadastroDuplicadoEEntradaInvalida() throws Exception {
         mvc.perform(post("/auth/register").contentType(MediaType.APPLICATION_JSON)
-                .content("{\"nome\":\"Outra pessoa\",\"email\":\"Alice@example.com\",\"senha\":\"12345678\"}"))
+                .content("{\"nome\":\"Outra pessoa\",\"email\":\"Alice@example.com\",\"cpf\":\"" + cpfDe("outra-pessoa") + "\",\"senha\":\"12345678\"}"))
                 .andExpect(status().isConflict());
         mvc.perform(post("/auth/register").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"nome\":\"\",\"email\":\"invalido\",\"senha\":\"123\"}"))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.campos.email").exists());
         mvc.perform(post("/auth/register").contentType(MediaType.APPLICATION_JSON)
-                .content(mapper.writeValueAsString(Map.of("nome", "Teste", "email", "outra@example.com", "senha", "á".repeat(37)))))
+                .content(mapper.writeValueAsString(Map.of("nome", "Teste", "email", "outra@example.com", "cpf", cpfDe("outra@example.com"), "senha", "á".repeat(37)))))
                 .andExpect(status().isBadRequest());
     }
     @Test void protegeRotasERejeitaJwtAdulterado() throws Exception {
@@ -202,5 +209,28 @@ class ApiIntegrationTest {
     }
     @Test void documentacaoAbertaEEsquemaBearerDisponivel() throws Exception {
         mvc.perform(get("/v3/api-docs")).andExpect(status().isOk()).andExpect(jsonPath("$.components.securitySchemes.bearerAuth.scheme").value("bearer"));
+    }
+    @Test void cpfInvalidoOuDuplicadoERejeitadoEFicaCifrado() throws Exception {
+        mvc.perform(post("/auth/register").contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.of("nome", "Beto", "email", "beto@example.com", "cpf", "111.111.111-11", "senha", "senha-segura-123"))))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/auth/register").contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.of("nome", "Beto", "email", "beto@example.com", "cpf", cpfDe("ALICE@example.com"), "senha", "senha-segura-123"))))
+                .andExpect(status().isConflict());
+        String guardado = jdbc.queryForObject("select cpf_cifrado from fisio.usuarios where email = 'alice@example.com'", String.class);
+        assertThat(guardado).isNotBlank().doesNotContain(cpfDe("ALICE@example.com"));
+        assertThat(alice.get("usuario").get("cpfPendente").asBoolean()).isFalse();
+    }
+    @Test void areaAdminExigePapelAdmin() throws Exception {
+        mvc.perform(get("/admin/agendamentos")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/admin/agendamentos").header("Authorization", bearer(alice))).andExpect(status().isForbidden());
+        jdbc.update("update fisio.usuarios set papel = 'ADMIN' where email = 'alice@example.com'");
+        mvc.perform(get("/admin/agendamentos").header("Authorization", bearer(alice))).andExpect(status().isOk());
+    }
+    @Test void bloqueiaLoginDepoisDeVariasFalhas() throws Exception {
+        String ruim = "{\"email\":\"bloqueio@example.com\",\"senha\":\"senha-errada-1\"}";
+        for (int i = 0; i < 5; i++)
+            mvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON).content(ruim)).andExpect(status().isUnauthorized());
+        mvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON).content(ruim)).andExpect(status().isTooManyRequests());
     }
 }

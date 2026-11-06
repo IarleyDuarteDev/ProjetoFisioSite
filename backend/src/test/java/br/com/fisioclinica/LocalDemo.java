@@ -20,6 +20,7 @@ public class LocalDemo {
         properties.setProperty("spring.datasource.username", "postgres");
         properties.setProperty("spring.datasource.password", "postgres");
         properties.setProperty("app.jwt.secret", Base64.getEncoder().encodeToString(secret));
+        properties.setProperty("app.cpf.key", Base64.getEncoder().encodeToString(secret));
         properties.setProperty("app.demo-data", "true");
         properties.forEach((key, value) -> System.setProperty(key.toString(), value.toString()));
         app.run(args);

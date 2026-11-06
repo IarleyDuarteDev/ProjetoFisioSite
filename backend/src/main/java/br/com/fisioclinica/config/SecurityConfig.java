@@ -10,6 +10,7 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.core.*;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.*;
@@ -46,13 +47,14 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/auth/register", "/auth/login", "/auth/forgot-password", "/auth/reset-password").permitAll()
                 .requestMatchers(HttpMethod.GET, "/horarios/disponiveis", "/profissionais").permitAll()
                 .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
+                .requestMatchers("/admin/**").hasRole("ADMIN")
                 .anyRequest().authenticated())
             .oauth2ResourceServer(resource -> resource.jwt(jwt -> jwt.jwtAuthenticationConverter(token -> {
                 try {
                     var usuario = usuarios.findById(UUID.fromString(token.getSubject())).orElseThrow();
                     Number version = token.getClaim("ver");
                     if (version == null || version.longValue() != usuario.getTokenVersion()) throw new IllegalArgumentException();
-                    return new JwtAuthenticationToken(token, List.of(), usuario.getId().toString());
+                    return new JwtAuthenticationToken(token, List.of(new SimpleGrantedAuthority("ROLE_" + usuario.getPapel().name())), usuario.getId().toString());
                 } catch (IllegalArgumentException | NoSuchElementException ex) {
                     throw new OAuth2AuthenticationException(new OAuth2Error("invalid_token"));
                 }

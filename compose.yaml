@@ -23,6 +23,9 @@ services:
       DB_USERNAME: fisio
       DB_PASSWORD: ${POSTGRES_PASSWORD:-fisio-local-dev}
       JWT_SECRET: ${JWT_SECRET:?Copie .env.example para .env e configure JWT_SECRET}
+      CPF_KEY: ${CPF_KEY:?Copie .env.example para .env e configure CPF_KEY}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
       FRONTEND_URL: http://localhost:5173
       SMTP_HOST: mailpit
       DEMO_DATA: "true"
