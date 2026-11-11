@@ -1,0 +1,26 @@
+From 1d1590f0e049abcb14f9b32d5e1cd81bd3b6cd7c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 21:05:19 +0000
+Subject: [PATCH] run.ps1 passa CPF_KEY, ADMIN_EMAIL e SWAGGER_ENABLED ao
+ back-end
+
+---
+ backend/run.ps1 | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/backend/run.ps1 b/backend/run.ps1
+index ad2c16c..13cdec4 100644
+--- a/backend/run.ps1
++++ b/backend/run.ps1
+@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
+ $configPath = Join-Path $PSScriptRoot '.env'
+ if (Test-Path -LiteralPath $configPath) {
+     foreach ($line in Get-Content -LiteralPath $configPath) {
+-        if ($line -match '^\s*(DB_URL|DB_USERNAME|DB_PASSWORD|JWT_SECRET|FRONTEND_URL|CLINIC_ZONE|DEMO_DATA|SMTP_HOST|SMTP_PORT|SMTP_AUTH|SMTP_STARTTLS|SMTP_USERNAME|SMTP_PASSWORD|MAIL_FROM|PORT)=(.*)$') {
++        if ($line -match '^\s*(DB_URL|DB_USERNAME|DB_PASSWORD|JWT_SECRET|FRONTEND_URL|CLINIC_ZONE|DEMO_DATA|SMTP_HOST|SMTP_PORT|SMTP_AUTH|SMTP_STARTTLS|SMTP_USERNAME|SMTP_PASSWORD|MAIL_FROM|PORT|CPF_KEY|ADMIN_EMAIL|SWAGGER_ENABLED)=(.*)$') {
+             [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2].Trim(), 'Process')
+         }
+     }
+-- 
+2.43.0
+
