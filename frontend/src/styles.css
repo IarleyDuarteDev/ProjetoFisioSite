@@ -129,12 +129,21 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .facts dt { font-size: .85rem; color: var(--suave); }
 .facts dd { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .field { display: grid; gap: 6px; margin-bottom: 14px; font-size: .9rem; font-weight: 500; }
-.field input, .field textarea { width: 100%; min-height: 46px; padding: 10px 12px; border: 1.5px solid #b4bfc9; border-radius: 8px; background: var(--branco); }
+.field input, .field textarea, .field select { width: 100%; min-height: 46px; padding: 10px 12px; border: 1.5px solid #b4bfc9; border-radius: 8px; background: var(--branco); }
 .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 16px 0; padding: 4px; border-radius: 10px; background: var(--papel); }
 .seg button { min-height: 40px; border: 0; border-radius: 8px; background: none; color: var(--suave); font-weight: 500; }
 .seg .is-on { background: var(--branco); color: var(--tinta); font-weight: 600; box-shadow: 0 1px 4px #1b243026; }
 .okmsg { margin-bottom: 12px; padding: 10px 14px; border-radius: 10px; background: #e1f2e9; color: #14452c; }
+
+/* Administração */
+.adm { max-width: 900px; }
+.adm .seg { max-width: 520px; grid-template-columns: repeat(3, 1fr); margin: 16px 0; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; align-items: end; margin: 8px 0 4px; }
+.form-grid .field { margin-bottom: 0; }
+.row--time .when strong { font-size: 1.4rem; }
+.row--simple { grid-template-columns: minmax(0, 1fr); padding: 14px 0; }
+.adm .dayline { margin-top: 28px; }
 
 /* Meus agendamentos */
 .mine { max-width: 800px; }
@@ -157,7 +166,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   .brand { min-height: 56px; }
   .who, .top__in > .btn { margin-left: auto; }
   .tabs { order: 3; width: 100%; margin-left: 0; gap: 0; }
-  .tabs button { flex: 1; min-height: 46px; }
+  .tabs button { flex: 1; min-height: 46px; padding: 0 4px; font-size: .85rem; white-space: nowrap; }
   .week { grid-template-columns: auto minmax(0, 1fr) auto; }
   .other { grid-column: 1 / -1; }
   .days { display: flex; overflow-x: auto; scroll-snap-type: x proximity; padding-bottom: 4px; }

@@ -223,6 +223,7 @@ Comece o estudo pelo [roteiro de aprendizado](docs/aprendizado.md). As credencia
 
 - **CPF:** obrigatório no cadastro, validado pelos dígitos e único por conta. Fica cifrado (AES-GCM) no banco, com um hash com chave só para barrar duplicidade, e a API só o devolve mascarado. A chave é `CPF_KEY` (gere uma aleatória; não troque depois de ter usuários nem publique). Contas anteriores informam o CPF no próximo agendamento.
 - **Administrador:** defina `ADMIN_EMAIL`. Ao iniciar, o servidor cria ou promove essa conta, troca a senha por uma aleatória e derruba sessões antigas. Quem controla a caixa de e-mail define a senha em "Esqueci minha senha". O papel fica no banco e as rotas `/admin/**` exigem `ADMIN` no servidor.
+- **Área do administrador:** a aba "Administração" só aparece para o papel `ADMIN`, mas quem protege é o servidor (`/admin/**`). Lista todos os agendamentos (CPF mascarado) e cancela, cadastra profissionais e cria ou remove horários. Cada alteração gera uma linha `auditoria admin=...` no log. Horários reservados ou com histórico de agendamento não podem ser removidos.
 - **Tentativas de login:** 5 erros seguidos para o mesmo e-mail bloqueiam novas tentativas por 15 minutos (o controle fica na memória e reinicia com o servidor).
 - **Swagger:** desligado por padrão. Ative com `SWAGGER_ENABLED=true` apenas em desenvolvimento.
 - **Nginx:** envia CSP, Permissions-Policy e X-Forwarded-For. Em produção, use HTTPS e ative o HSTS indicado em `frontend/nginx.conf`.

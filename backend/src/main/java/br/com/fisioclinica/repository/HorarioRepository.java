@@ -19,6 +19,10 @@ public interface HorarioRepository extends JpaRepository<Horario, UUID> {
     List<Horario> disponiveis(LocalDate data, LocalDate hoje, LocalTime agora,
                              UUID profissionalId, TipoSessao tipoSessao, Pageable pageable);
 
+    @Query("select h from Horario h join fetch h.profissional where h.data = :data order by h.horaInicio, h.profissional.nome")
+    List<Horario> doDia(LocalDate data);
+    List<Horario> findByProfissionalIdAndData(UUID profissionalId, LocalDate data);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select h from Horario h where h.id = :id")
     Optional<Horario> findLockedById(UUID id);
