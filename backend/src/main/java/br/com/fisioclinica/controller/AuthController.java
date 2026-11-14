@@ -21,6 +21,10 @@ public class AuthController {
     public Sessao cadastrar(@Valid @RequestBody Cadastro dto) { return auth.cadastrar(dto); }
     @GetMapping("/provedores")
     public Map<String, String> provedores() { return social.provedores(); }
+    @PostMapping("/confirm-email")
+    public Confirmado confirmarEmail(@Valid @RequestBody ConfirmarEmail dto) { return auth.confirmarEmail(dto); }
+    @PostMapping("/resend-confirmation")
+    public void reenviarConfirmacao(@AuthenticationPrincipal Jwt jwt) { auth.reenviarConfirmacao(UUID.fromString(jwt.getSubject())); }
     @PostMapping("/google")
     public Sessao google(@Valid @RequestBody LoginSocial dto) { return social.entrar(Provedor.GOOGLE, dto.token(), dto.nome()); }
     @PostMapping("/apple")

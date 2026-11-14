@@ -43,6 +43,8 @@ public class AgendaService {
         exigirDisponivel(horario);
         var reserva = new Agendamento();
         var cliente = usuarios.findById(clienteId).orElseThrow(() -> ApiException.notFound("Conta não encontrada."));
+        if (cliente.getPapel() == Papel.CLIENTE && !cliente.isEmailVerificado())
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "Confirme seu e-mail para agendar.");
         if (cliente.getPapel() == Papel.CLIENTE && cliente.getCpfHash() == null)
             throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "Informe seu CPF para agendar.");
         reserva.setCliente(cliente);

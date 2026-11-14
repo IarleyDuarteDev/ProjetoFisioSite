@@ -23,6 +23,10 @@ public final class AuthDtos {
     public record LoginSocial(@NotBlank @Size(max = 4096) String token, @Size(max = 120) String nome) {
         @Override public String toString() { return "LoginSocial[campos protegidos]"; }
     }
+    public record ConfirmarEmail(@NotBlank @Pattern(regexp = "[A-Za-z0-9_-]{43}") String token) {
+        @Override public String toString() { return "ConfirmarEmail[campos protegidos]"; }
+    }
+    public record Confirmado(UUID usuarioId) {}
     public record InformarCpf(@NotBlank @Size(max = 14) String cpf) {
         @Override public String toString() { return "InformarCpf[campos protegidos]"; }
     }
@@ -30,9 +34,9 @@ public final class AuthDtos {
                             @NotBlank @Size(min = 8, max = 72) String novaSenha) {
         @Override public String toString() { return "Redefinir[campos protegidos]"; }
     }
-    public record Cliente(UUID id, String nome, String email, Papel papel, boolean cpfPendente) {
+    public record Cliente(UUID id, String nome, String email, Papel papel, boolean cpfPendente, boolean emailVerificado) {
         public static Cliente from(Usuario u) {
-            return new Cliente(u.getId(), u.getNome(), u.getEmail(), u.getPapel(), u.getPapel() == Papel.CLIENTE && u.getCpfHash() == null);
+            return new Cliente(u.getId(), u.getNome(), u.getEmail(), u.getPapel(), u.getPapel() == Papel.CLIENTE && u.getCpfHash() == null, u.isEmailVerificado());
         }
     }
     public record Sessao(String accessToken, String tokenType, long expiresIn, Cliente usuario) {

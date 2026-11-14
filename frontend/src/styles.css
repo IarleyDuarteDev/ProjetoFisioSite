@@ -92,6 +92,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .day.is-on span, .day.is-on small { color: #d3deea; }
 .banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 16px; padding: 8px 12px 8px 16px; border-radius: 10px; background: #fbefc7; }
 
+.verify { margin: 0 0 20px; }
 .dayline { margin: 28px 0 14px; font-size: 1.25rem; font-weight: 600; }
 .dayline::first-letter { text-transform: uppercase; }
 .dayline span { margin-left: 16px; font: 400 .95rem var(--texto); color: var(--suave); }

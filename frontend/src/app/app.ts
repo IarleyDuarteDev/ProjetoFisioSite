@@ -1,4 +1,5 @@
 import { Component, effect, inject, signal } from '@angular/core';
+import { firstValueFrom } from 'rxjs';
 import { Api, Appointment, Session } from './api';
 import { Appointments } from './appointments';
 import { AuthDialog, AuthMode } from './auth-dialog';
@@ -22,6 +23,11 @@ import { ICONS } from './icons';
       } @else { <button class="btn btn--line" (click)="auth.set({ mode: 'login' })">Entrar</button> }
     </div></header>
     <main class="wrap main">
+      @if (api.session(); as s) {
+        @if (!s.usuario.emailVerificado) {
+          <div class="banner verify" role="status"><span>Confirme seu e-mail para poder agendar. Enviamos um link para {{ s.usuario.email }}.</span><button class="link" (click)="reenviarConfirmacao()">Reenviar link</button></div>
+        }
+      }
       @if (notice()) { <div class="notice" role="status"><span>{{ notice() }}</span><button class="icon" aria-label="Dispensar mensagem" (click)="notice.set('')"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path [attr.d]="ic.close" /></svg></button></div> }
       @if (view() === 'agendar') {
         <app-booking [rescheduling]="rescheduling()" [refresh]="refresh()" (needLogin)="auth.set({ mode: 'login' })" (booked)="booked($event)" (cancelReschedule)="rescheduling.set(null)" />
@@ -48,10 +54,23 @@ export class App {
   constructor() {
     const reset = location.hash.match(/^#redefinir=([A-Za-z0-9_-]{43})$/);
     if (reset) { this.auth.set({ mode: 'reset', token: reset[1] }); history.replaceState(null, '', location.pathname); }
+    const confirmar = location.hash.match(/^#confirmar=([A-Za-z0-9_-]{43})$/);
+    if (confirmar) { history.replaceState(null, '', location.pathname); this.confirmarEmail(confirmar[1]); }
     effect(() => {
       if (!this.api.expired()) return;
       this.view.set('agendar'); this.auth.set({ mode: 'login' }); this.notice.set('Sua sessão expirou. Entre novamente para continuar.');
     });
+  }
+  private async confirmarEmail(token: string) {
+    try {
+      const r = await firstValueFrom(this.api.request<{ usuarioId: string }>('POST', '/auth/confirm-email', { token }));
+      this.api.session.update(s => (s && s.usuario.id === r.usuarioId ? { ...s, usuario: { ...s.usuario, emailVerificado: true } } : s));
+      this.notice.set('E-mail confirmado! Agora você já pode agendar.');
+    } catch (e) { this.notice.set((e as Error).message); }
+  }
+  async reenviarConfirmacao() {
+    try { await firstValueFrom(this.api.request('POST', '/auth/resend-confirmation')); this.notice.set('Enviamos um novo link para o seu e-mail.'); }
+    catch (e) { this.notice.set((e as Error).message); }
   }
   login(s: Session) { this.api.session.set(s); this.auth.set(null); this.notice.set(`Bem-vindo(a), ${s.usuario.nome.split(' ')[0]}! Escolha seu horário para continuar.`); }
   logout() { this.api.session.set(null); this.view.set('agendar'); this.rescheduling.set(null); this.notice.set('Você saiu da sua conta.'); }

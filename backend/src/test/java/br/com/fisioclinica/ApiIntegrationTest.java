@@ -74,9 +74,12 @@ class ApiIntegrationTest {
         h.setProfissional(p); h.setTipoSessao(tipo); return horarios.save(h);
     }
     JsonNode cadastrar(String email) throws Exception {
-        return json(mvc.perform(post("/auth/register").contentType(MediaType.APPLICATION_JSON)
+        var sessao = json(mvc.perform(post("/auth/register").contentType(MediaType.APPLICATION_JSON)
                 .content(mapper.writeValueAsString(Map.of("nome", "Cliente Teste", "email", email, "cpf", cpfDe(email), "senha", "senha-segura-123"))))
                 .andExpect(status().isCreated()).andReturn());
+        // Nos testes de agenda, as contas já chegam com o e-mail confirmado; a confirmação em si tem teste próprio.
+        jdbc.update("update fisio.usuarios set email_verificado = true where email = ?", email.toLowerCase());
+        return sessao;
     }
     /** CPF válido e estável, gerado a partir de um texto, para cada usuário de teste. */
     static String cpfDe(String seed) {
@@ -285,10 +288,39 @@ class ApiIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
     @Test void loginSocialEmContaComSenhaNaoVerificadaTrocaASenhaEDerrubaSessoes() throws Exception {
+        jdbc.update("update fisio.usuarios set email_verificado = false where email = 'alice@example.com'");
         mvc.perform(post("/auth/google").contentType(MediaType.APPLICATION_JSON).content("{\"token\":\"sub-a|alice@example.com|true|Alice\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.usuario.email").value("alice@example.com"));
         mvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON).content("{\"email\":\"alice@example.com\",\"senha\":\"senha-segura-123\"}"))
                 .andExpect(status().isUnauthorized());
         mvc.perform(get("/agendamentos/meus").header("Authorization", bearer(alice))).andExpect(status().isUnauthorized());
+    }
+    @Test void agendarExigeEmailConfirmadoPeloLinkEnviado() throws Exception {
+        var bia = json(mvc.perform(post("/auth/register").contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.of("nome", "Bia", "email", "bia@example.com", "cpf", cpfDe("bia@example.com"), "senha", "senha-segura-123"))))
+                .andExpect(status().isCreated()).andReturn());
+        assertThat(bia.get("usuario").get("emailVerificado").asBoolean()).isFalse();
+        var captor = ArgumentCaptor.forClass(String.class);
+        verify(emails).enviarConfirmacao(eq("bia@example.com"), captor.capture());
+        String pedido = mapper.writeValueAsString(Map.of("horarioId", primeiro.getId()));
+        mvc.perform(post("/agendamentos").header("Authorization", bearer(bia)).contentType(MediaType.APPLICATION_JSON).content(pedido))
+                .andExpect(status().isUnprocessableEntity());
+        mvc.perform(post("/auth/resend-confirmation").header("Authorization", bearer(bia))).andExpect(status().isOk());
+        verify(emails, org.mockito.Mockito.times(1)).enviarConfirmacao(eq("bia@example.com"), org.mockito.ArgumentMatchers.anyString()); // no máximo um por minuto
+        String corpo = mapper.writeValueAsString(Map.of("token", captor.getValue()));
+        mvc.perform(post("/auth/confirm-email").contentType(MediaType.APPLICATION_JSON).content(corpo))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.usuarioId").value(bia.get("usuario").get("id").asText()));
+        mvc.perform(post("/auth/confirm-email").contentType(MediaType.APPLICATION_JSON).content(corpo)).andExpect(status().isBadRequest());
+        mvc.perform(post("/agendamentos").header("Authorization", bearer(bia)).contentType(MediaType.APPLICATION_JSON).content(pedido))
+                .andExpect(status().isCreated());
+    }
+    @Test void redefinirSenhaPeloLinkTambemConfirmaOEmail() throws Exception {
+        jdbc.update("update fisio.usuarios set email_verificado = false where email = 'alice@example.com'");
+        mvc.perform(post("/auth/forgot-password").contentType(MediaType.APPLICATION_JSON).content("{\"email\":\"alice@example.com\"}")).andExpect(status().isAccepted());
+        var captor = ArgumentCaptor.forClass(String.class);
+        verify(emails).enviarRecuperacao(eq("alice@example.com"), captor.capture());
+        mvc.perform(post("/auth/reset-password").contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.of("token", captor.getValue(), "novaSenha", "nova-senha-123")))).andExpect(status().isOk());
+        assertThat(jdbc.queryForObject("select email_verificado from fisio.usuarios where email = 'alice@example.com'", Boolean.class)).isTrue();
     }
 }

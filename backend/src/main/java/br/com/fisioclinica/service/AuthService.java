@@ -25,15 +25,16 @@ public class AuthService {
     private final Clock clock;
     private final CpfCofre cofre;
     private final LimitadorTentativas limitador;
+    private final ConfirmacaoEmailRepository confirmacoes;
     private final String dummyHash;
     private final SecureRandom random = new SecureRandom();
 
     public AuthService(UsuarioRepository usuarios, RecuperacaoSenhaRepository recuperacoes,
                        PasswordEncoder encoder, TokenService tokens, EmailService emails, Clock clock,
-                       CpfCofre cofre, LimitadorTentativas limitador) {
+                       CpfCofre cofre, LimitadorTentativas limitador, ConfirmacaoEmailRepository confirmacoes) {
         this.usuarios = usuarios; this.recuperacoes = recuperacoes; this.encoder = encoder;
         this.tokens = tokens; this.emails = emails; this.clock = clock;
-        this.cofre = cofre; this.limitador = limitador;
+        this.cofre = cofre; this.limitador = limitador; this.confirmacoes = confirmacoes;
         this.dummyHash = encoder.encode(UUID.randomUUID().toString());
     }
     @Transactional
@@ -50,7 +51,9 @@ public class AuthService {
         usuario.setCpfCifrado(cofre.cifrar(cpf));
         usuario.setCpfHash(cpfHash);
         usuario.setSenhaHash(encoder.encode(dto.senha()));
-        return tokens.criar(usuarios.saveAndFlush(usuario));
+        var salvo = usuarios.saveAndFlush(usuario);
+        emitirConfirmacao(salvo);
+        return tokens.criar(salvo);
     }
     @Transactional(readOnly = true)
     public Sessao login(Login dto) {
@@ -112,8 +115,46 @@ public class AuthService {
         if (!reset.getExpiraEm().isAfter(clock.instant())) throw tokenInvalido();
         usuario.setSenhaHash(encoder.encode(dto.novaSenha()));
         usuario.setTokenVersion(usuario.getTokenVersion() + 1);
+        usuario.setEmailVerificado(true); // clicar no link enviado ao e-mail prova que a pessoa controla a caixa
         recuperacoes.delete(reset);
     }
+    /** Gera um link de confirmação válido por 24 horas. Falha de SMTP não derruba o cadastro: dá para pedir reenvio. */
+    private void emitirConfirmacao(Usuario usuario) {
+        var confirmacao = confirmacoes.findByUsuarioId(usuario.getId()).orElseGet(ConfirmacaoEmail::new);
+        byte[] bytes = new byte[32];
+        random.nextBytes(bytes);
+        String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+        confirmacao.setUsuario(usuario);
+        confirmacao.setTokenHash(hash(token));
+        confirmacao.setExpiraEm(clock.instant().plus(Duration.ofHours(24)));
+        confirmacoes.saveAndFlush(confirmacao);
+        try {
+            emails.enviarConfirmacao(usuario.getEmail(), token);
+        } catch (MailException ex) {
+            log.warn("Falha no envio da confirmação de e-mail. Verifique a configuração SMTP.");
+        }
+    }
+    /** No máximo um envio por minuto por conta. */
+    @Transactional
+    public void reenviarConfirmacao(UUID usuarioId) {
+        var usuario = usuarios.findLockedById(usuarioId).orElseThrow(() -> ApiException.notFound("Conta não encontrada."));
+        if (usuario.isEmailVerificado()) return;
+        var atual = confirmacoes.findByUsuarioId(usuarioId);
+        if (atual.isPresent() && atual.get().getExpiraEm().isAfter(clock.instant().plus(Duration.ofHours(24)).minusSeconds(60))) return;
+        emitirConfirmacao(usuario);
+    }
+    @Transactional
+    public Confirmado confirmarEmail(ConfirmarEmail dto) {
+        String tokenHash = hash(dto.token());
+        UUID usuarioId = confirmacoes.findUsuarioIdByTokenHash(tokenHash).orElseThrow(AuthService::linkInvalido);
+        var usuario = usuarios.findLockedById(usuarioId).orElseThrow(AuthService::linkInvalido);
+        var confirmacao = confirmacoes.findByTokenHash(tokenHash).orElseThrow(AuthService::linkInvalido);
+        if (!confirmacao.getExpiraEm().isAfter(clock.instant())) throw linkInvalido();
+        usuario.setEmailVerificado(true);
+        confirmacoes.delete(confirmacao);
+        return new Confirmado(usuario.getId());
+    }
+    private static ApiException linkInvalido() { return ApiException.badRequest("Link de confirmação inválido ou expirado."); }
     private static String cpfValido(String informado) {
         String cpf = Cpf.normalizar(informado);
         if (!Cpf.valido(cpf)) throw ApiException.badRequest("Informe um CPF válido.");
