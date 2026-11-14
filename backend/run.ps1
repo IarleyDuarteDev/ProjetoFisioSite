@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $configPath = Join-Path $PSScriptRoot '.env'
 if (Test-Path -LiteralPath $configPath) {
     foreach ($line in Get-Content -LiteralPath $configPath) {
-        if ($line -match '^\s*(DB_URL|DB_USERNAME|DB_PASSWORD|JWT_SECRET|FRONTEND_URL|CLINIC_ZONE|DEMO_DATA|SMTP_HOST|SMTP_PORT|SMTP_AUTH|SMTP_STARTTLS|SMTP_USERNAME|SMTP_PASSWORD|MAIL_FROM|PORT)=(.*)$') {
+        if ($line -match '^\s*(DB_URL|DB_USERNAME|DB_PASSWORD|JWT_SECRET|FRONTEND_URL|CLINIC_ZONE|DEMO_DATA|SMTP_HOST|SMTP_PORT|SMTP_AUTH|SMTP_STARTTLS|SMTP_USERNAME|SMTP_PASSWORD|MAIL_FROM|PORT|CPF_KEY|ADMIN_EMAIL|SWAGGER_ENABLED|GOOGLE_CLIENT_ID|APPLE_CLIENT_ID)=(.*)$') {
             [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2].Trim(), 'Process')
         }
     }
