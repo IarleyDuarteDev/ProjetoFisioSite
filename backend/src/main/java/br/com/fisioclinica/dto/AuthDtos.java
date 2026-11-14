@@ -20,6 +20,9 @@ public final class AuthDtos {
     public record Recuperar(@NotBlank @Email @Size(max = 254) String email) {
         @Override public String toString() { return "Recuperar[campos protegidos]"; }
     }
+    public record LoginSocial(@NotBlank @Size(max = 4096) String token, @Size(max = 120) String nome) {
+        @Override public String toString() { return "LoginSocial[campos protegidos]"; }
+    }
     public record InformarCpf(@NotBlank @Size(max = 14) String cpf) {
         @Override public String toString() { return "InformarCpf[campos protegidos]"; }
     }

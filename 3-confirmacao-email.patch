@@ -1,0 +1,398 @@
+From c44f6fb41c79e12847b2f82142e1a76ae9da3def Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 13 Nov 2026 11:53:24 +0000
+Subject: [PATCH] =?UTF-8?q?Confirma=C3=A7=C3=A3o=20de=20e-mail=20por=20lin?=
+ =?UTF-8?q?k=20e=20agendamento=20s=C3=B3=20com=20e-mail=20confirmado?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ README.md                                     |  1 +
+ .../fisioclinica/config/SecurityConfig.java   |  2 +-
+ .../controller/AuthController.java            |  4 ++
+ .../br/com/fisioclinica/dto/AuthDtos.java     |  8 +++-
+ .../fisioclinica/model/ConfirmacaoEmail.java  | 18 +++++++
+ .../ConfirmacaoEmailRepository.java           | 12 +++++
+ .../fisioclinica/service/AgendaService.java   |  2 +
+ .../com/fisioclinica/service/AuthService.java | 47 +++++++++++++++++--
+ .../fisioclinica/service/EmailService.java    |  9 ++++
+ .../db/migration/V4__confirmacao_email.sql    |  7 +++
+ .../com/fisioclinica/ApiIntegrationTest.java  | 34 +++++++++++++-
+ frontend/src/app/api.ts                       |  2 +-
+ frontend/src/app/app.ts                       | 19 ++++++++
+ frontend/src/styles.css                       |  1 +
+ 14 files changed, 158 insertions(+), 8 deletions(-)
+ create mode 100644 backend/src/main/java/br/com/fisioclinica/model/ConfirmacaoEmail.java
+ create mode 100644 backend/src/main/java/br/com/fisioclinica/repository/ConfirmacaoEmailRepository.java
+ create mode 100644 backend/src/main/resources/db/migration/V4__confirmacao_email.sql
+
+diff --git a/README.md b/README.md
+index 50b9b3d..db5c6fc 100644
+--- a/README.md
++++ b/README.md
+@@ -225,6 +225,7 @@ Comece o estudo pelo [roteiro de aprendizado](docs/aprendizado.md). As credencia
+ - **Administrador:** defina `ADMIN_EMAIL`. Ao iniciar, o servidor cria ou promove essa conta, troca a senha por uma aleatória e derruba sessões antigas. Quem controla a caixa de e-mail define a senha em "Esqueci minha senha". O papel fica no banco e as rotas `/admin/**` exigem `ADMIN` no servidor.
+ - **Área do administrador:** a aba "Administração" só aparece para o papel `ADMIN`, mas quem protege é o servidor (`/admin/**`). Lista todos os agendamentos (CPF mascarado) e cancela, cadastra profissionais e cria ou remove horários. Cada alteração gera uma linha `auditoria admin=...` no log. Horários reservados ou com histórico de agendamento não podem ser removidos.
+ - **Login com Google e Apple:** ligado por `GOOGLE_CLIENT_ID` e `APPLE_CLIENT_ID` (vazio = botão escondido). O servidor valida o token do provedor (assinatura, emissor, público e validade) e vincula a conta pelo identificador estável do provedor, nunca só pelo e-mail. O e-mail precisa vir confirmado. Se o e-mail já pertence a uma conta com senha ainda não verificada, a conta é vinculada, mas a senha é trocada por uma aleatória e as sessões antigas caem (a conta pode ter sido criada por outra pessoa); o dono recupera a senha em "Esqueci minha senha". Quem entra por aqui informa o CPF no primeiro agendamento. Google: crie um Client ID do tipo "Aplicativo da Web" no Google Cloud Console e autorize `http://localhost:5173` em "Origens JavaScript autorizadas". Apple: exige conta de desenvolvedor paga, um Services ID e um domínio com HTTPS.
++- **Confirmação de e-mail:** o cadastro envia um link (válido por 24 horas, uso único, guardado só como hash). Enquanto o e-mail não for confirmado, a conta entra no site mas não agenda. Redefinir a senha pelo link do e-mail também confirma. O botão "Reenviar link" respeita um envio por minuto. Contas criadas antes desta versão precisam confirmar uma vez.
+ - **Tentativas de login:** 5 erros seguidos para o mesmo e-mail bloqueiam novas tentativas por 15 minutos (o controle fica na memória e reinicia com o servidor).
+ - **Swagger:** desligado por padrão. Ative com `SWAGGER_ENABLED=true` apenas em desenvolvimento.
+ - **Nginx:** envia CSP, Permissions-Policy e X-Forwarded-For. Em produção, use HTTPS e ative o HSTS indicado em `frontend/nginx.conf`.
+diff --git a/backend/src/main/java/br/com/fisioclinica/config/SecurityConfig.java b/backend/src/main/java/br/com/fisioclinica/config/SecurityConfig.java
+index c80325d..830e48e 100644
+--- a/backend/src/main/java/br/com/fisioclinica/config/SecurityConfig.java
++++ b/backend/src/main/java/br/com/fisioclinica/config/SecurityConfig.java
+@@ -44,7 +44,7 @@ public class SecurityConfig {
+         http.csrf(csrf -> csrf.disable()).cors(cors -> {})
+             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+             .authorizeHttpRequests(auth -> auth
+-                .requestMatchers(HttpMethod.POST, "/auth/register", "/auth/login", "/auth/forgot-password", "/auth/reset-password", "/auth/google", "/auth/apple").permitAll()
++                .requestMatchers(HttpMethod.POST, "/auth/register", "/auth/login", "/auth/forgot-password", "/auth/reset-password", "/auth/google", "/auth/apple", "/auth/confirm-email").permitAll()
+                 .requestMatchers(HttpMethod.GET, "/horarios/disponiveis", "/profissionais", "/auth/provedores").permitAll()
+                 .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
+                 .requestMatchers("/admin/**").hasRole("ADMIN")
+diff --git a/backend/src/main/java/br/com/fisioclinica/controller/AuthController.java b/backend/src/main/java/br/com/fisioclinica/controller/AuthController.java
+index 634bb9c..7f0c7e9 100644
+--- a/backend/src/main/java/br/com/fisioclinica/controller/AuthController.java
++++ b/backend/src/main/java/br/com/fisioclinica/controller/AuthController.java
+@@ -21,6 +21,10 @@ public class AuthController {
+     public Sessao cadastrar(@Valid @RequestBody Cadastro dto) { return auth.cadastrar(dto); }
+     @GetMapping("/provedores")
+     public Map<String, String> provedores() { return social.provedores(); }
++    @PostMapping("/confirm-email")
++    public Confirmado confirmarEmail(@Valid @RequestBody ConfirmarEmail dto) { return auth.confirmarEmail(dto); }
++    @PostMapping("/resend-confirmation")
++    public void reenviarConfirmacao(@AuthenticationPrincipal Jwt jwt) { auth.reenviarConfirmacao(UUID.fromString(jwt.getSubject())); }
+     @PostMapping("/google")
+     public Sessao google(@Valid @RequestBody LoginSocial dto) { return social.entrar(Provedor.GOOGLE, dto.token(), dto.nome()); }
+     @PostMapping("/apple")
+diff --git a/backend/src/main/java/br/com/fisioclinica/dto/AuthDtos.java b/backend/src/main/java/br/com/fisioclinica/dto/AuthDtos.java
+index 71a1189..9017284 100644
+--- a/backend/src/main/java/br/com/fisioclinica/dto/AuthDtos.java
++++ b/backend/src/main/java/br/com/fisioclinica/dto/AuthDtos.java
+@@ -23,6 +23,10 @@ public final class AuthDtos {
+     public record LoginSocial(@NotBlank @Size(max = 4096) String token, @Size(max = 120) String nome) {
+         @Override public String toString() { return "LoginSocial[campos protegidos]"; }
+     }
++    public record ConfirmarEmail(@NotBlank @Pattern(regexp = "[A-Za-z0-9_-]{43}") String token) {
++        @Override public String toString() { return "ConfirmarEmail[campos protegidos]"; }
++    }
++    public record Confirmado(UUID usuarioId) {}
+     public record InformarCpf(@NotBlank @Size(max = 14) String cpf) {
+         @Override public String toString() { return "InformarCpf[campos protegidos]"; }
+     }
+@@ -30,9 +34,9 @@ public final class AuthDtos {
+                             @NotBlank @Size(min = 8, max = 72) String novaSenha) {
+         @Override public String toString() { return "Redefinir[campos protegidos]"; }
+     }
+-    public record Cliente(UUID id, String nome, String email, Papel papel, boolean cpfPendente) {
++    public record Cliente(UUID id, String nome, String email, Papel papel, boolean cpfPendente, boolean emailVerificado) {
+         public static Cliente from(Usuario u) {
+-            return new Cliente(u.getId(), u.getNome(), u.getEmail(), u.getPapel(), u.getPapel() == Papel.CLIENTE && u.getCpfHash() == null);
++            return new Cliente(u.getId(), u.getNome(), u.getEmail(), u.getPapel(), u.getPapel() == Papel.CLIENTE && u.getCpfHash() == null, u.isEmailVerificado());
+         }
+     }
+     public record Sessao(String accessToken, String tokenType, long expiresIn, Cliente usuario) {
+diff --git a/backend/src/main/java/br/com/fisioclinica/model/ConfirmacaoEmail.java b/backend/src/main/java/br/com/fisioclinica/model/ConfirmacaoEmail.java
+new file mode 100644
+index 0000000..f59d45f
+--- /dev/null
++++ b/backend/src/main/java/br/com/fisioclinica/model/ConfirmacaoEmail.java
+@@ -0,0 +1,18 @@
++package br.com.fisioclinica.model;
++
++import jakarta.persistence.*;
++import lombok.*;
++import java.time.Instant;
++import java.util.UUID;
++
++@Entity @Table(name = "confirmacoes_email") @Getter @Setter @NoArgsConstructor
++public class ConfirmacaoEmail {
++    @Id @GeneratedValue(strategy = GenerationType.UUID)
++    private UUID id;
++    @OneToOne(fetch = FetchType.LAZY, optional = false) @JoinColumn(name = "usuario_id", unique = true)
++    private Usuario usuario;
++    @Column(nullable = false, unique = true, length = 64)
++    private String tokenHash;
++    @Column(nullable = false)
++    private Instant expiraEm;
++}
+diff --git a/backend/src/main/java/br/com/fisioclinica/repository/ConfirmacaoEmailRepository.java b/backend/src/main/java/br/com/fisioclinica/repository/ConfirmacaoEmailRepository.java
+new file mode 100644
+index 0000000..5740ef1
+--- /dev/null
++++ b/backend/src/main/java/br/com/fisioclinica/repository/ConfirmacaoEmailRepository.java
+@@ -0,0 +1,12 @@
++package br.com.fisioclinica.repository;
++
++import br.com.fisioclinica.model.ConfirmacaoEmail;
++import org.springframework.data.jpa.repository.*;
++import java.util.*;
++
++public interface ConfirmacaoEmailRepository extends JpaRepository<ConfirmacaoEmail, UUID> {
++    Optional<ConfirmacaoEmail> findByTokenHash(String tokenHash);
++    Optional<ConfirmacaoEmail> findByUsuarioId(UUID usuarioId);
++    @Query("select c.usuario.id from ConfirmacaoEmail c where c.tokenHash = :hash")
++    Optional<UUID> findUsuarioIdByTokenHash(String hash);
++}
+diff --git a/backend/src/main/java/br/com/fisioclinica/service/AgendaService.java b/backend/src/main/java/br/com/fisioclinica/service/AgendaService.java
+index 5da9ce9..299ae1e 100644
+--- a/backend/src/main/java/br/com/fisioclinica/service/AgendaService.java
++++ b/backend/src/main/java/br/com/fisioclinica/service/AgendaService.java
+@@ -43,6 +43,8 @@ public class AgendaService {
+         exigirDisponivel(horario);
+         var reserva = new Agendamento();
+         var cliente = usuarios.findById(clienteId).orElseThrow(() -> ApiException.notFound("Conta não encontrada."));
++        if (cliente.getPapel() == Papel.CLIENTE && !cliente.isEmailVerificado())
++            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "Confirme seu e-mail para agendar.");
+         if (cliente.getPapel() == Papel.CLIENTE && cliente.getCpfHash() == null)
+             throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "Informe seu CPF para agendar.");
+         reserva.setCliente(cliente);
+diff --git a/backend/src/main/java/br/com/fisioclinica/service/AuthService.java b/backend/src/main/java/br/com/fisioclinica/service/AuthService.java
+index 9daa65d..f8c99fd 100644
+--- a/backend/src/main/java/br/com/fisioclinica/service/AuthService.java
++++ b/backend/src/main/java/br/com/fisioclinica/service/AuthService.java
+@@ -25,15 +25,16 @@ public class AuthService {
+     private final Clock clock;
+     private final CpfCofre cofre;
+     private final LimitadorTentativas limitador;
++    private final ConfirmacaoEmailRepository confirmacoes;
+     private final String dummyHash;
+     private final SecureRandom random = new SecureRandom();
+ 
+     public AuthService(UsuarioRepository usuarios, RecuperacaoSenhaRepository recuperacoes,
+                        PasswordEncoder encoder, TokenService tokens, EmailService emails, Clock clock,
+-                       CpfCofre cofre, LimitadorTentativas limitador) {
++                       CpfCofre cofre, LimitadorTentativas limitador, ConfirmacaoEmailRepository confirmacoes) {
+         this.usuarios = usuarios; this.recuperacoes = recuperacoes; this.encoder = encoder;
+         this.tokens = tokens; this.emails = emails; this.clock = clock;
+-        this.cofre = cofre; this.limitador = limitador;
++        this.cofre = cofre; this.limitador = limitador; this.confirmacoes = confirmacoes;
+         this.dummyHash = encoder.encode(UUID.randomUUID().toString());
+     }
+     @Transactional
+@@ -50,7 +51,9 @@ public class AuthService {
+         usuario.setCpfCifrado(cofre.cifrar(cpf));
+         usuario.setCpfHash(cpfHash);
+         usuario.setSenhaHash(encoder.encode(dto.senha()));
+-        return tokens.criar(usuarios.saveAndFlush(usuario));
++        var salvo = usuarios.saveAndFlush(usuario);
++        emitirConfirmacao(salvo);
++        return tokens.criar(salvo);
+     }
+     @Transactional(readOnly = true)
+     public Sessao login(Login dto) {
+@@ -112,8 +115,46 @@ public class AuthService {
+         if (!reset.getExpiraEm().isAfter(clock.instant())) throw tokenInvalido();
+         usuario.setSenhaHash(encoder.encode(dto.novaSenha()));
+         usuario.setTokenVersion(usuario.getTokenVersion() + 1);
++        usuario.setEmailVerificado(true); // clicar no link enviado ao e-mail prova que a pessoa controla a caixa
+         recuperacoes.delete(reset);
+     }
++    /** Gera um link de confirmação válido por 24 horas. Falha de SMTP não derruba o cadastro: dá para pedir reenvio. */
++    private void emitirConfirmacao(Usuario usuario) {
++        var confirmacao = confirmacoes.findByUsuarioId(usuario.getId()).orElseGet(ConfirmacaoEmail::new);
++        byte[] bytes = new byte[32];
++        random.nextBytes(bytes);
++        String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
++        confirmacao.setUsuario(usuario);
++        confirmacao.setTokenHash(hash(token));
++        confirmacao.setExpiraEm(clock.instant().plus(Duration.ofHours(24)));
++        confirmacoes.saveAndFlush(confirmacao);
++        try {
++            emails.enviarConfirmacao(usuario.getEmail(), token);
++        } catch (MailException ex) {
++            log.warn("Falha no envio da confirmação de e-mail. Verifique a configuração SMTP.");
++        }
++    }
++    /** No máximo um envio por minuto por conta. */
++    @Transactional
++    public void reenviarConfirmacao(UUID usuarioId) {
++        var usuario = usuarios.findLockedById(usuarioId).orElseThrow(() -> ApiException.notFound("Conta não encontrada."));
++        if (usuario.isEmailVerificado()) return;
++        var atual = confirmacoes.findByUsuarioId(usuarioId);
++        if (atual.isPresent() && atual.get().getExpiraEm().isAfter(clock.instant().plus(Duration.ofHours(24)).minusSeconds(60))) return;
++        emitirConfirmacao(usuario);
++    }
++    @Transactional
++    public Confirmado confirmarEmail(ConfirmarEmail dto) {
++        String tokenHash = hash(dto.token());
++        UUID usuarioId = confirmacoes.findUsuarioIdByTokenHash(tokenHash).orElseThrow(AuthService::linkInvalido);
++        var usuario = usuarios.findLockedById(usuarioId).orElseThrow(AuthService::linkInvalido);
++        var confirmacao = confirmacoes.findByTokenHash(tokenHash).orElseThrow(AuthService::linkInvalido);
++        if (!confirmacao.getExpiraEm().isAfter(clock.instant())) throw linkInvalido();
++        usuario.setEmailVerificado(true);
++        confirmacoes.delete(confirmacao);
++        return new Confirmado(usuario.getId());
++    }
++    private static ApiException linkInvalido() { return ApiException.badRequest("Link de confirmação inválido ou expirado."); }
+     private static String cpfValido(String informado) {
+         String cpf = Cpf.normalizar(informado);
+         if (!Cpf.valido(cpf)) throw ApiException.badRequest("Informe um CPF válido.");
+diff --git a/backend/src/main/java/br/com/fisioclinica/service/EmailService.java b/backend/src/main/java/br/com/fisioclinica/service/EmailService.java
+index 08bfb4d..64f728c 100644
+--- a/backend/src/main/java/br/com/fisioclinica/service/EmailService.java
++++ b/backend/src/main/java/br/com/fisioclinica/service/EmailService.java
+@@ -14,6 +14,15 @@ public class EmailService {
+                         @Value("${app.frontend-url}") String frontendUrl) {
+         this.sender = sender; this.from = from; this.frontendUrl = frontendUrl;
+     }
++    public void enviarConfirmacao(String email, String token) {
++        var message = new SimpleMailMessage();
++        message.setFrom(from);
++        message.setTo(email);
++        message.setSubject("Fisio Clínica — confirme seu e-mail");
++        message.setText("Use o link abaixo em até 24 horas para confirmar seu e-mail e poder agendar:\n\n"
++                + frontendUrl + "/#confirmar=" + token + "\n\nSe você não criou uma conta, ignore este e-mail.");
++        sender.send(message);
++    }
+     public void enviarRecuperacao(String email, String token) {
+         var message = new SimpleMailMessage();
+         message.setFrom(from);
+diff --git a/backend/src/main/resources/db/migration/V4__confirmacao_email.sql b/backend/src/main/resources/db/migration/V4__confirmacao_email.sql
+new file mode 100644
+index 0000000..e7a9b4c
+--- /dev/null
++++ b/backend/src/main/resources/db/migration/V4__confirmacao_email.sql
+@@ -0,0 +1,7 @@
++-- Link de confirmação de e-mail: só o hash do token é guardado, uso único, validade de 24 horas.
++CREATE TABLE confirmacoes_email (
++    id UUID PRIMARY KEY,
++    usuario_id UUID NOT NULL UNIQUE REFERENCES usuarios(id) ON DELETE CASCADE,
++    token_hash VARCHAR(64) NOT NULL UNIQUE,
++    expira_em TIMESTAMP WITH TIME ZONE NOT NULL
++);
+diff --git a/backend/src/test/java/br/com/fisioclinica/ApiIntegrationTest.java b/backend/src/test/java/br/com/fisioclinica/ApiIntegrationTest.java
+index d361a69..6eec1b5 100644
+--- a/backend/src/test/java/br/com/fisioclinica/ApiIntegrationTest.java
++++ b/backend/src/test/java/br/com/fisioclinica/ApiIntegrationTest.java
+@@ -74,9 +74,12 @@ class ApiIntegrationTest {
+         h.setProfissional(p); h.setTipoSessao(tipo); return horarios.save(h);
+     }
+     JsonNode cadastrar(String email) throws Exception {
+-        return json(mvc.perform(post("/auth/register").contentType(MediaType.APPLICATION_JSON)
++        var sessao = json(mvc.perform(post("/auth/register").contentType(MediaType.APPLICATION_JSON)
+                 .content(mapper.writeValueAsString(Map.of("nome", "Cliente Teste", "email", email, "cpf", cpfDe(email), "senha", "senha-segura-123"))))
+                 .andExpect(status().isCreated()).andReturn());
++        // Nos testes de agenda, as contas já chegam com o e-mail confirmado; a confirmação em si tem teste próprio.
++        jdbc.update("update fisio.usuarios set email_verificado = true where email = ?", email.toLowerCase());
++        return sessao;
+     }
+     /** CPF válido e estável, gerado a partir de um texto, para cada usuário de teste. */
+     static String cpfDe(String seed) {
+@@ -285,10 +288,39 @@ class ApiIntegrationTest {
+                 .andExpect(status().isUnauthorized());
+     }
+     @Test void loginSocialEmContaComSenhaNaoVerificadaTrocaASenhaEDerrubaSessoes() throws Exception {
++        jdbc.update("update fisio.usuarios set email_verificado = false where email = 'alice@example.com'");
+         mvc.perform(post("/auth/google").contentType(MediaType.APPLICATION_JSON).content("{\"token\":\"sub-a|alice@example.com|true|Alice\"}"))
+                 .andExpect(status().isOk()).andExpect(jsonPath("$.usuario.email").value("alice@example.com"));
+         mvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON).content("{\"email\":\"alice@example.com\",\"senha\":\"senha-segura-123\"}"))
+                 .andExpect(status().isUnauthorized());
+         mvc.perform(get("/agendamentos/meus").header("Authorization", bearer(alice))).andExpect(status().isUnauthorized());
+     }
++    @Test void agendarExigeEmailConfirmadoPeloLinkEnviado() throws Exception {
++        var bia = json(mvc.perform(post("/auth/register").contentType(MediaType.APPLICATION_JSON)
++                .content(mapper.writeValueAsString(Map.of("nome", "Bia", "email", "bia@example.com", "cpf", cpfDe("bia@example.com"), "senha", "senha-segura-123"))))
++                .andExpect(status().isCreated()).andReturn());
++        assertThat(bia.get("usuario").get("emailVerificado").asBoolean()).isFalse();
++        var captor = ArgumentCaptor.forClass(String.class);
++        verify(emails).enviarConfirmacao(eq("bia@example.com"), captor.capture());
++        String pedido = mapper.writeValueAsString(Map.of("horarioId", primeiro.getId()));
++        mvc.perform(post("/agendamentos").header("Authorization", bearer(bia)).contentType(MediaType.APPLICATION_JSON).content(pedido))
++                .andExpect(status().isUnprocessableEntity());
++        mvc.perform(post("/auth/resend-confirmation").header("Authorization", bearer(bia))).andExpect(status().isOk());
++        verify(emails, org.mockito.Mockito.times(1)).enviarConfirmacao(eq("bia@example.com"), org.mockito.ArgumentMatchers.anyString()); // no máximo um por minuto
++        String corpo = mapper.writeValueAsString(Map.of("token", captor.getValue()));
++        mvc.perform(post("/auth/confirm-email").contentType(MediaType.APPLICATION_JSON).content(corpo))
++                .andExpect(status().isOk()).andExpect(jsonPath("$.usuarioId").value(bia.get("usuario").get("id").asText()));
++        mvc.perform(post("/auth/confirm-email").contentType(MediaType.APPLICATION_JSON).content(corpo)).andExpect(status().isBadRequest());
++        mvc.perform(post("/agendamentos").header("Authorization", bearer(bia)).contentType(MediaType.APPLICATION_JSON).content(pedido))
++                .andExpect(status().isCreated());
++    }
++    @Test void redefinirSenhaPeloLinkTambemConfirmaOEmail() throws Exception {
++        jdbc.update("update fisio.usuarios set email_verificado = false where email = 'alice@example.com'");
++        mvc.perform(post("/auth/forgot-password").contentType(MediaType.APPLICATION_JSON).content("{\"email\":\"alice@example.com\"}")).andExpect(status().isAccepted());
++        var captor = ArgumentCaptor.forClass(String.class);
++        verify(emails).enviarRecuperacao(eq("alice@example.com"), captor.capture());
++        mvc.perform(post("/auth/reset-password").contentType(MediaType.APPLICATION_JSON)
++                .content(mapper.writeValueAsString(Map.of("token", captor.getValue(), "novaSenha", "nova-senha-123")))).andExpect(status().isOk());
++        assertThat(jdbc.queryForObject("select email_verificado from fisio.usuarios where email = 'alice@example.com'", Boolean.class)).isTrue();
++    }
+ }
+diff --git a/frontend/src/app/api.ts b/frontend/src/app/api.ts
+index d95b497..78115d5 100644
+--- a/frontend/src/app/api.ts
++++ b/frontend/src/app/api.ts
+@@ -6,7 +6,7 @@ export interface Pro { id: string; nome: string; }
+ export interface Slot { id: string; data: string; horaInicio: string; horaFim: string; tipoSessao: string; profissional: Pro; }
+ export interface Appointment { id: string; status: 'CONFIRMADO' | 'CANCELADO'; observacoes?: string; horario: Slot; }
+ export interface Page { itens: Appointment[]; totalPaginas: number; }
+-export interface Usuario { id: string; nome: string; email: string; papel: 'CLIENTE' | 'ADMIN'; cpfPendente: boolean; }
++export interface Usuario { id: string; nome: string; email: string; papel: 'CLIENTE' | 'ADMIN'; cpfPendente: boolean; emailVerificado: boolean; }
+ export interface AgendamentoAdmin { agendamento: Appointment; clienteNome: string; clienteEmail: string; clienteCpf: string | null; }
+ export interface PageAdmin { itens: AgendamentoAdmin[]; totalPaginas: number; }
+ export interface HorarioAdmin { horario: Slot; status: 'DISPONIVEL' | 'RESERVADO'; }
+diff --git a/frontend/src/app/app.ts b/frontend/src/app/app.ts
+index 1fe3da0..473bfb8 100644
+--- a/frontend/src/app/app.ts
++++ b/frontend/src/app/app.ts
+@@ -1,4 +1,5 @@
+ import { Component, effect, inject, signal } from '@angular/core';
++import { firstValueFrom } from 'rxjs';
+ import { Api, Appointment, Session } from './api';
+ import { Appointments } from './appointments';
+ import { AuthDialog, AuthMode } from './auth-dialog';
+@@ -22,6 +23,11 @@ import { ICONS } from './icons';
+       } @else { <button class="btn btn--line" (click)="auth.set({ mode: 'login' })">Entrar</button> }
+     </div></header>
+     <main class="wrap main">
++      @if (api.session(); as s) {
++        @if (!s.usuario.emailVerificado) {
++          <div class="banner verify" role="status"><span>Confirme seu e-mail para poder agendar. Enviamos um link para {{ s.usuario.email }}.</span><button class="link" (click)="reenviarConfirmacao()">Reenviar link</button></div>
++        }
++      }
+       @if (notice()) { <div class="notice" role="status"><span>{{ notice() }}</span><button class="icon" aria-label="Dispensar mensagem" (click)="notice.set('')"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path [attr.d]="ic.close" /></svg></button></div> }
+       @if (view() === 'agendar') {
+         <app-booking [rescheduling]="rescheduling()" [refresh]="refresh()" (needLogin)="auth.set({ mode: 'login' })" (booked)="booked($event)" (cancelReschedule)="rescheduling.set(null)" />
+@@ -48,11 +54,24 @@ export class App {
+   constructor() {
+     const reset = location.hash.match(/^#redefinir=([A-Za-z0-9_-]{43})$/);
+     if (reset) { this.auth.set({ mode: 'reset', token: reset[1] }); history.replaceState(null, '', location.pathname); }
++    const confirmar = location.hash.match(/^#confirmar=([A-Za-z0-9_-]{43})$/);
++    if (confirmar) { history.replaceState(null, '', location.pathname); this.confirmarEmail(confirmar[1]); }
+     effect(() => {
+       if (!this.api.expired()) return;
+       this.view.set('agendar'); this.auth.set({ mode: 'login' }); this.notice.set('Sua sessão expirou. Entre novamente para continuar.');
+     });
+   }
++  private async confirmarEmail(token: string) {
++    try {
++      const r = await firstValueFrom(this.api.request<{ usuarioId: string }>('POST', '/auth/confirm-email', { token }));
++      this.api.session.update(s => (s && s.usuario.id === r.usuarioId ? { ...s, usuario: { ...s.usuario, emailVerificado: true } } : s));
++      this.notice.set('E-mail confirmado! Agora você já pode agendar.');
++    } catch (e) { this.notice.set((e as Error).message); }
++  }
++  async reenviarConfirmacao() {
++    try { await firstValueFrom(this.api.request('POST', '/auth/resend-confirmation')); this.notice.set('Enviamos um novo link para o seu e-mail.'); }
++    catch (e) { this.notice.set((e as Error).message); }
++  }
+   login(s: Session) { this.api.session.set(s); this.auth.set(null); this.notice.set(`Bem-vindo(a), ${s.usuario.nome.split(' ')[0]}! Escolha seu horário para continuar.`); }
+   logout() { this.api.session.set(null); this.view.set('agendar'); this.rescheduling.set(null); this.notice.set('Você saiu da sua conta.'); }
+   showMine() { if (!this.api.session()) { this.auth.set({ mode: 'login' }); return; } this.rescheduling.set(null); this.view.set('meus'); }
+diff --git a/frontend/src/styles.css b/frontend/src/styles.css
+index 8886371..be21a1d 100644
+--- a/frontend/src/styles.css
++++ b/frontend/src/styles.css
+@@ -92,6 +92,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
+ .day.is-on span, .day.is-on small { color: #d3deea; }
+ .banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 16px; padding: 8px 12px 8px 16px; border-radius: 10px; background: #fbefc7; }
+ 
++.verify { margin: 0 0 20px; }
+ .dayline { margin: 28px 0 14px; font-size: 1.25rem; font-weight: 600; }
+ .dayline::first-letter { text-transform: uppercase; }
+ .dayline span { margin-left: 16px; font: 400 .95rem var(--texto); color: var(--suave); }
+-- 
+2.43.0
+

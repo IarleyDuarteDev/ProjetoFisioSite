@@ -1,7 +1,8 @@
-import { Component, ElementRef, afterNextRender, inject, input, linkedSignal, output, signal, viewChild } from '@angular/core';
+import { Component, ElementRef, afterNextRender, effect, inject, input, linkedSignal, output, signal, viewChild } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { Api, Session } from './api';
 import { formatCpf } from './format';
+import { APPLE_JS, GOOGLE_JS, carregarScript } from './social';
 import { ICONS } from './icons';
 
 export type AuthMode = 'login' | 'register' | 'forgot' | 'reset';
@@ -25,6 +26,13 @@ export type AuthMode = 'login' | 'register' | 'forgot' | 'reset';
         @if (message()) { <p class="okmsg" role="status">{{ message() }}</p> }
         <button class="btn btn--full" [disabled]="busy()">{{ busy() ? 'Aguarde…' : mode() === 'login' ? 'Entrar na minha conta' : mode() === 'register' ? 'Criar minha conta' : mode() === 'forgot' ? 'Enviar link' : 'Salvar nova senha' }}</button>
       </form>
+      @if ((mode() === 'login' || mode() === 'register') && (prov().google || prov().apple)) {
+        <div class="social">
+          <p class="social__ou"><span>ou</span></p>
+          @if (prov().google) { <div #gbtn class="social__google"></div> }
+          @if (prov().apple) { <button type="button" class="btn btn--line btn--full" [disabled]="busy()" (click)="apple()">Continuar com a Apple</button> }
+        </div>
+      }
       @if (mode() === 'login') { <button class="link center" (click)="go('forgot')">Esqueci minha senha</button> }
       @if (mode() === 'forgot' || mode() === 'reset') { <button class="link center" (click)="go('login')">Voltar para o login</button> }
     </dialog>
@@ -44,7 +52,38 @@ export class AuthDialog {
   message = signal('');
   private dlg = viewChild.required<ElementRef<HTMLDialogElement>>('dlg');
 
-  constructor() { afterNextRender(() => this.dlg().nativeElement.showModal()); }
+  protected prov = signal<{ google: string; apple: string }>({ google: '', apple: '' });
+  private gbtn = viewChild<ElementRef<HTMLElement>>('gbtn');
+
+  constructor() {
+    afterNextRender(() => this.dlg().nativeElement.showModal());
+    firstValueFrom(this.api.request<{ google: string; apple: string }>('GET', '/auth/provedores')).then(p => this.prov.set(p)).catch(() => undefined);
+    // Desenha o botão oficial do Google quando o contêiner aparece (login ou cadastro).
+    effect(() => {
+      const el = this.gbtn()?.nativeElement, id = this.prov().google;
+      if (!el || !id) return;
+      carregarScript(GOOGLE_JS).then(() => {
+        const g = (window as any).google.accounts.id;
+        g.initialize({ client_id: id, callback: (r: { credential: string }) => this.entrarSocial('google', r.credential) });
+        g.renderButton(el, { theme: 'outline', size: 'large', text: 'continue_with', locale: 'pt-BR', width: 320 });
+      }).catch(() => this.error.set('Não foi possível carregar o login do Google.'));
+    });
+  }
+  async entrarSocial(provedor: 'google' | 'apple', token: string, nome?: string) {
+    this.busy.set(true); this.error.set('');
+    try { this.done.emit(await firstValueFrom(this.api.request<Session>('POST', `/auth/${provedor}`, { token, nome }))); }
+    catch (e) { this.error.set((e as Error).message); } finally { this.busy.set(false); }
+  }
+  async apple() {
+    try {
+      await carregarScript(APPLE_JS);
+      const auth = (window as any).AppleID.auth;
+      auth.init({ clientId: this.prov().apple, scope: 'name email', redirectURI: location.origin, usePopup: true });
+      const r = await auth.signIn();
+      const n = r.user?.name;
+      await this.entrarSocial('apple', r.authorization.id_token, n ? `${n.firstName ?? ''} ${n.lastName ?? ''}`.trim() : undefined);
+    } catch (e) { if ((e as { error?: string })?.error !== 'popup_closed_by_user') this.error.set('Não foi possível entrar com a Apple.'); }
+  }
   go(m: AuthMode) { this.mode.set(m); this.error.set(''); this.message.set(''); }
   maskCpf(event: Event) { const el = event.target as HTMLInputElement; el.value = formatCpf(el.value); }
   close() { if (!this.busy()) this.closed.emit(); }

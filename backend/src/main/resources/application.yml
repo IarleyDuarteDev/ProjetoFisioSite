@@ -51,6 +51,10 @@ app:
   admin-email: ${ADMIN_EMAIL:}
   cpf:
     key: ${CPF_KEY}
+  google:
+    client-id: ${GOOGLE_CLIENT_ID:}
+  apple:
+    client-id: ${APPLE_CLIENT_ID:}
 springdoc:
   api-docs:
     enabled: ${SWAGGER_ENABLED:false}
