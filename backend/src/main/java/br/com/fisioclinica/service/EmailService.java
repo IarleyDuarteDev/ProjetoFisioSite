@@ -14,6 +14,15 @@ public class EmailService {
                         @Value("${app.frontend-url}") String frontendUrl) {
         this.sender = sender; this.from = from; this.frontendUrl = frontendUrl;
     }
+    public void enviarConfirmacao(String email, String token) {
+        var message = new SimpleMailMessage();
+        message.setFrom(from);
+        message.setTo(email);
+        message.setSubject("Fisio Clínica — confirme seu e-mail");
+        message.setText("Use o link abaixo em até 24 horas para confirmar seu e-mail e poder agendar:\n\n"
+                + frontendUrl + "/#confirmar=" + token + "\n\nSe você não criou uma conta, ignore este e-mail.");
+        sender.send(message);
+    }
     public void enviarRecuperacao(String email, String token) {
         var message = new SimpleMailMessage();
         message.setFrom(from);

@@ -44,7 +44,7 @@ public class SecurityConfig {
         http.csrf(csrf -> csrf.disable()).cors(cors -> {})
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers(HttpMethod.POST, "/auth/register", "/auth/login", "/auth/forgot-password", "/auth/reset-password", "/auth/google", "/auth/apple").permitAll()
+                .requestMatchers(HttpMethod.POST, "/auth/register", "/auth/login", "/auth/forgot-password", "/auth/reset-password", "/auth/google", "/auth/apple", "/auth/confirm-email").permitAll()
                 .requestMatchers(HttpMethod.GET, "/horarios/disponiveis", "/profissionais", "/auth/provedores").permitAll()
                 .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
                 .requestMatchers("/admin/**").hasRole("ADMIN")

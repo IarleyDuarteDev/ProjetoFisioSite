@@ -6,7 +6,7 @@ export interface Pro { id: string; nome: string; }
 export interface Slot { id: string; data: string; horaInicio: string; horaFim: string; tipoSessao: string; profissional: Pro; }
 export interface Appointment { id: string; status: 'CONFIRMADO' | 'CANCELADO'; observacoes?: string; horario: Slot; }
 export interface Page { itens: Appointment[]; totalPaginas: number; }
-export interface Usuario { id: string; nome: string; email: string; papel: 'CLIENTE' | 'ADMIN'; cpfPendente: boolean; }
+export interface Usuario { id: string; nome: string; email: string; papel: 'CLIENTE' | 'ADMIN'; cpfPendente: boolean; emailVerificado: boolean; }
 export interface AgendamentoAdmin { agendamento: Appointment; clienteNome: string; clienteEmail: string; clienteCpf: string | null; }
 export interface PageAdmin { itens: AgendamentoAdmin[]; totalPaginas: number; }
 export interface HorarioAdmin { horario: Slot; status: 'DISPONIVEL' | 'RESERVADO'; }
