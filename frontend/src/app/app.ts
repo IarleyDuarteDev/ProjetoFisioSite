@@ -2,18 +2,20 @@ import { Component, effect, inject, signal } from '@angular/core';
 import { Api, Appointment, Session } from './api';
 import { Appointments } from './appointments';
 import { AuthDialog, AuthMode } from './auth-dialog';
+import { Admin } from './admin';
 import { Booking } from './booking';
 import { ICONS } from './icons';
 
 @Component({
   selector: 'app-root',
-  imports: [Booking, Appointments, AuthDialog],
+  imports: [Booking, Appointments, Admin, AuthDialog],
   template: `
     <header class="top"><div class="wrap top__in">
       <a class="brand" href="#" aria-label="Fisio Clínica, início" (click)="$event.preventDefault(); view.set('agendar')"><span class="loops" aria-hidden="true"></span>fisioclínica</a>
       <nav class="tabs" aria-label="Navegação principal">
         <button [attr.aria-current]="view() === 'agendar' ? 'page' : null" (click)="view.set('agendar')">Agendar sessão</button>
         <button [attr.aria-current]="view() === 'meus' ? 'page' : null" (click)="showMine()">Meus agendamentos</button>
+        @if (isAdmin) { <button [attr.aria-current]="view() === 'admin' ? 'page' : null" (click)="view.set('admin')">Administração</button> }
       </nav>
       @if (api.session(); as s) {
         <div class="who"><span>{{ s.usuario.nome.split(' ')[0] }}</span><button class="icon" title="Sair" aria-label="Sair da conta" (click)="logout()"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path [attr.d]="ic.logout" /></svg></button></div>
@@ -23,6 +25,8 @@ import { ICONS } from './icons';
       @if (notice()) { <div class="notice" role="status"><span>{{ notice() }}</span><button class="icon" aria-label="Dispensar mensagem" (click)="notice.set('')"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path [attr.d]="ic.close" /></svg></button></div> }
       @if (view() === 'agendar') {
         <app-booking [rescheduling]="rescheduling()" [refresh]="refresh()" (needLogin)="auth.set({ mode: 'login' })" (booked)="booked($event)" (cancelReschedule)="rescheduling.set(null)" />
+      } @else if (view() === 'admin' && isAdmin) {
+        <app-admin />
       } @else {
         <app-appointments [refresh]="refresh()" (reschedule)="startReschedule($event)" (notice)="notice.set($event)" (browse)="view.set('agendar')" />
       }
@@ -34,7 +38,8 @@ import { ICONS } from './icons';
 export class App {
   protected api = inject(Api);
   protected ic = ICONS;
-  view = signal<'agendar' | 'meus'>('agendar');
+  view = signal<'agendar' | 'meus' | 'admin'>('agendar');
+  protected get isAdmin() { return this.api.session()?.usuario.papel === 'ADMIN'; }
   notice = signal('');
   auth = signal<{ mode: AuthMode; token?: string } | null>(null);
   rescheduling = signal<Appointment | null>(null);

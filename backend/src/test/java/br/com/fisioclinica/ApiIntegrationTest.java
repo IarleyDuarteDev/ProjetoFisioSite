@@ -234,4 +234,32 @@ class ApiIntegrationTest {
             mvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON).content(ruim)).andExpect(status().isUnauthorized());
         mvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON).content(ruim)).andExpect(status().isTooManyRequests());
     }
+    @Test void adminGerenciaProfissionaisHorariosEAgendamentos() throws Exception {
+        jdbc.update("update fisio.usuarios set papel = 'ADMIN' where email = 'alice@example.com'");
+        String auth = bearer(alice);
+        var dia = LocalDate.now(clock).plusDays(3);
+        var pro = json(mvc.perform(post("/admin/profissionais").header("Authorization", auth).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"nome\":\"Nova Pessoa\",\"especialidade\":\"Pilates\"}")).andExpect(status().isCreated()).andReturn());
+        String corpo = "{\"profissionalId\":\"" + pro.get("id").asText() + "\",\"data\":\"" + dia + "\",\"tipoSessao\":\"PILATES\",\"inicios\":[\"08:00\",\"09:00\"],\"duracaoMinutos\":50}";
+        var criados = json(mvc.perform(post("/admin/horarios").header("Authorization", auth).contentType(MediaType.APPLICATION_JSON).content(corpo))
+                .andExpect(status().isCreated()).andReturn());
+        assertThat(criados).hasSize(2);
+        mvc.perform(post("/admin/horarios").header("Authorization", auth).contentType(MediaType.APPLICATION_JSON).content(corpo)).andExpect(status().isConflict());
+        mvc.perform(post("/admin/horarios").header("Authorization", auth).contentType(MediaType.APPLICATION_JSON)
+                .content(corpo.replace("\"08:00\",\"09:00\"", "\"08:30\""))).andExpect(status().isConflict());
+        mvc.perform(get("/admin/horarios").param("data", dia.toString()).header("Authorization", auth))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(2));
+
+        var bia = cadastrar("bia@example.com");
+        String reservadoId = criados.get(0).get("horario").get("id").asText();
+        var reserva = reservar(bia, UUID.fromString(reservadoId));
+        mvc.perform(delete("/admin/horarios/" + reservadoId).header("Authorization", auth)).andExpect(status().isConflict());
+        mvc.perform(put("/admin/agendamentos/" + reserva.get("id").asText() + "/cancelar").header("Authorization", auth))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.agendamento.status").value("CANCELADO"));
+        mvc.perform(delete("/admin/horarios/" + reservadoId).header("Authorization", auth)).andExpect(status().isConflict()); // tem histórico
+        mvc.perform(delete("/admin/horarios/" + criados.get(1).get("horario").get("id").asText()).header("Authorization", auth))
+                .andExpect(status().isNoContent());
+        mvc.perform(post("/admin/profissionais").header("Authorization", bearer(bia)).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"nome\":\"X\",\"especialidade\":\"Y\"}")).andExpect(status().isForbidden());
+    }
 }
