@@ -1,0 +1,578 @@
+From eac4af5c4f0d318d21bd6c0a5d6e85fc1282c8ab Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 20:46:23 +0000
+Subject: [PATCH] =?UTF-8?q?Login=20com=20Google=20e=20Apple=20(Apple=20des?=
+ =?UTF-8?q?ligada=20por=20configura=C3=A7=C3=A3o)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .env.example                                  |  3 +
+ README.md                                     |  1 +
+ backend/.env.example                          |  3 +
+ backend/run.ps1                               |  2 +-
+ .../fisioclinica/config/SecurityConfig.java   |  4 +-
+ .../controller/AuthController.java            | 10 +++
+ .../br/com/fisioclinica/dto/AuthDtos.java     |  3 +
+ .../fisioclinica/model/IdentidadeSocial.java  | 18 +++++
+ .../br/com/fisioclinica/model/Provedor.java   |  3 +
+ .../br/com/fisioclinica/model/Usuario.java    |  2 +
+ .../IdentidadeSocialRepository.java           | 10 +++
+ .../service/LoginSocialService.java           | 70 +++++++++++++++++++
+ .../service/VerificadorIdentidade.java        | 14 ++++
+ .../fisioclinica/service/VerificadorOidc.java | 55 +++++++++++++++
+ backend/src/main/resources/application.yml    |  4 ++
+ .../db/migration/V3__login_social.sql         | 11 +++
+ .../com/fisioclinica/ApiIntegrationTest.java  | 29 ++++++++
+ compose.yaml                                  |  2 +
+ frontend/nginx.conf                           |  2 +-
+ frontend/src/app/auth-dialog.ts               | 43 +++++++++++-
+ frontend/src/app/social.ts                    | 17 +++++
+ frontend/src/styles.css                       |  5 ++
+ 22 files changed, 305 insertions(+), 6 deletions(-)
+ create mode 100644 backend/src/main/java/br/com/fisioclinica/model/IdentidadeSocial.java
+ create mode 100644 backend/src/main/java/br/com/fisioclinica/model/Provedor.java
+ create mode 100644 backend/src/main/java/br/com/fisioclinica/repository/IdentidadeSocialRepository.java
+ create mode 100644 backend/src/main/java/br/com/fisioclinica/service/LoginSocialService.java
+ create mode 100644 backend/src/main/java/br/com/fisioclinica/service/VerificadorIdentidade.java
+ create mode 100644 backend/src/main/java/br/com/fisioclinica/service/VerificadorOidc.java
+ create mode 100644 backend/src/main/resources/db/migration/V3__login_social.sql
+ create mode 100644 frontend/src/app/social.ts
+
+diff --git a/.env.example b/.env.example
+index 440d5b1..efc1ad8 100644
+--- a/.env.example
++++ b/.env.example
+@@ -8,3 +8,6 @@ CPF_KEY=substitua-por-uma-chave-aleatoria-de-pelo-menos-32-bytes
+ ADMIN_EMAIL=
+ # Documentação interativa da API (/swagger-ui.html). Deixe false fora do computador de desenvolvimento.
+ SWAGGER_ENABLED=true
++# Login social. Deixe vazio para desligar. Google: Client ID do tipo "Aplicativo da Web" (Google Cloud Console). Apple: Services ID.
++GOOGLE_CLIENT_ID=
++APPLE_CLIENT_ID=
+diff --git a/README.md b/README.md
+index 718210e..50b9b3d 100644
+--- a/README.md
++++ b/README.md
+@@ -224,6 +224,7 @@ Comece o estudo pelo [roteiro de aprendizado](docs/aprendizado.md). As credencia
+ - **CPF:** obrigatório no cadastro, validado pelos dígitos e único por conta. Fica cifrado (AES-GCM) no banco, com um hash com chave só para barrar duplicidade, e a API só o devolve mascarado. A chave é `CPF_KEY` (gere uma aleatória; não troque depois de ter usuários nem publique). Contas anteriores informam o CPF no próximo agendamento.
+ - **Administrador:** defina `ADMIN_EMAIL`. Ao iniciar, o servidor cria ou promove essa conta, troca a senha por uma aleatória e derruba sessões antigas. Quem controla a caixa de e-mail define a senha em "Esqueci minha senha". O papel fica no banco e as rotas `/admin/**` exigem `ADMIN` no servidor.
+ - **Área do administrador:** a aba "Administração" só aparece para o papel `ADMIN`, mas quem protege é o servidor (`/admin/**`). Lista todos os agendamentos (CPF mascarado) e cancela, cadastra profissionais e cria ou remove horários. Cada alteração gera uma linha `auditoria admin=...` no log. Horários reservados ou com histórico de agendamento não podem ser removidos.
++- **Login com Google e Apple:** ligado por `GOOGLE_CLIENT_ID` e `APPLE_CLIENT_ID` (vazio = botão escondido). O servidor valida o token do provedor (assinatura, emissor, público e validade) e vincula a conta pelo identificador estável do provedor, nunca só pelo e-mail. O e-mail precisa vir confirmado. Se o e-mail já pertence a uma conta com senha ainda não verificada, a conta é vinculada, mas a senha é trocada por uma aleatória e as sessões antigas caem (a conta pode ter sido criada por outra pessoa); o dono recupera a senha em "Esqueci minha senha". Quem entra por aqui informa o CPF no primeiro agendamento. Google: crie um Client ID do tipo "Aplicativo da Web" no Google Cloud Console e autorize `http://localhost:5173` em "Origens JavaScript autorizadas". Apple: exige conta de desenvolvedor paga, um Services ID e um domínio com HTTPS.
+ - **Tentativas de login:** 5 erros seguidos para o mesmo e-mail bloqueiam novas tentativas por 15 minutos (o controle fica na memória e reinicia com o servidor).
+ - **Swagger:** desligado por padrão. Ative com `SWAGGER_ENABLED=true` apenas em desenvolvimento.
+ - **Nginx:** envia CSP, Permissions-Policy e X-Forwarded-For. Em produção, use HTTPS e ative o HSTS indicado em `frontend/nginx.conf`.
+diff --git a/backend/.env.example b/backend/.env.example
+index 5f98ae8..f297904 100644
+--- a/backend/.env.example
++++ b/backend/.env.example
+@@ -19,3 +19,6 @@ CPF_KEY=substitua-por-uma-chave-aleatoria-de-pelo-menos-32-bytes
+ ADMIN_EMAIL=
+ # Documentação interativa da API (/swagger-ui.html). Deixe false fora do computador de desenvolvimento.
+ SWAGGER_ENABLED=true
++# Login social. Deixe vazio para desligar. Google: Client ID do tipo "Aplicativo da Web" (Google Cloud Console). Apple: Services ID.
++GOOGLE_CLIENT_ID=
++APPLE_CLIENT_ID=
+diff --git a/backend/run.ps1 b/backend/run.ps1
+index 13cdec4..7f80069 100644
+--- a/backend/run.ps1
++++ b/backend/run.ps1
+@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
+ $configPath = Join-Path $PSScriptRoot '.env'
+ if (Test-Path -LiteralPath $configPath) {
+     foreach ($line in Get-Content -LiteralPath $configPath) {
+-        if ($line -match '^\s*(DB_URL|DB_USERNAME|DB_PASSWORD|JWT_SECRET|FRONTEND_URL|CLINIC_ZONE|DEMO_DATA|SMTP_HOST|SMTP_PORT|SMTP_AUTH|SMTP_STARTTLS|SMTP_USERNAME|SMTP_PASSWORD|MAIL_FROM|PORT|CPF_KEY|ADMIN_EMAIL|SWAGGER_ENABLED)=(.*)$') {
++        if ($line -match '^\s*(DB_URL|DB_USERNAME|DB_PASSWORD|JWT_SECRET|FRONTEND_URL|CLINIC_ZONE|DEMO_DATA|SMTP_HOST|SMTP_PORT|SMTP_AUTH|SMTP_STARTTLS|SMTP_USERNAME|SMTP_PASSWORD|MAIL_FROM|PORT|CPF_KEY|ADMIN_EMAIL|SWAGGER_ENABLED|GOOGLE_CLIENT_ID|APPLE_CLIENT_ID)=(.*)$') {
+             [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2].Trim(), 'Process')
+         }
+     }
+diff --git a/backend/src/main/java/br/com/fisioclinica/config/SecurityConfig.java b/backend/src/main/java/br/com/fisioclinica/config/SecurityConfig.java
+index a565ce8..c80325d 100644
+--- a/backend/src/main/java/br/com/fisioclinica/config/SecurityConfig.java
++++ b/backend/src/main/java/br/com/fisioclinica/config/SecurityConfig.java
+@@ -44,8 +44,8 @@ public class SecurityConfig {
+         http.csrf(csrf -> csrf.disable()).cors(cors -> {})
+             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+             .authorizeHttpRequests(auth -> auth
+-                .requestMatchers(HttpMethod.POST, "/auth/register", "/auth/login", "/auth/forgot-password", "/auth/reset-password").permitAll()
+-                .requestMatchers(HttpMethod.GET, "/horarios/disponiveis", "/profissionais").permitAll()
++                .requestMatchers(HttpMethod.POST, "/auth/register", "/auth/login", "/auth/forgot-password", "/auth/reset-password", "/auth/google", "/auth/apple").permitAll()
++                .requestMatchers(HttpMethod.GET, "/horarios/disponiveis", "/profissionais", "/auth/provedores").permitAll()
+                 .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
+                 .requestMatchers("/admin/**").hasRole("ADMIN")
+                 .anyRequest().authenticated())
+diff --git a/backend/src/main/java/br/com/fisioclinica/controller/AuthController.java b/backend/src/main/java/br/com/fisioclinica/controller/AuthController.java
+index 1e7f256..634bb9c 100644
+--- a/backend/src/main/java/br/com/fisioclinica/controller/AuthController.java
++++ b/backend/src/main/java/br/com/fisioclinica/controller/AuthController.java
+@@ -1,20 +1,30 @@
+ package br.com.fisioclinica.controller;
+ 
+ import br.com.fisioclinica.dto.AuthDtos.*;
++import br.com.fisioclinica.model.Provedor;
+ import br.com.fisioclinica.service.AuthService;
++import br.com.fisioclinica.service.LoginSocialService;
+ import jakarta.validation.Valid;
+ import lombok.RequiredArgsConstructor;
+ import org.springframework.http.HttpStatus;
+ import org.springframework.security.core.annotation.AuthenticationPrincipal;
+ import org.springframework.security.oauth2.jwt.Jwt;
+ import org.springframework.web.bind.annotation.*;
++import java.util.Map;
+ import java.util.UUID;
+ 
+ @RestController @RequestMapping("/auth") @RequiredArgsConstructor
+ public class AuthController {
+     private final AuthService auth;
++    private final LoginSocialService social;
+     @PostMapping("/register") @ResponseStatus(HttpStatus.CREATED)
+     public Sessao cadastrar(@Valid @RequestBody Cadastro dto) { return auth.cadastrar(dto); }
++    @GetMapping("/provedores")
++    public Map<String, String> provedores() { return social.provedores(); }
++    @PostMapping("/google")
++    public Sessao google(@Valid @RequestBody LoginSocial dto) { return social.entrar(Provedor.GOOGLE, dto.token(), dto.nome()); }
++    @PostMapping("/apple")
++    public Sessao apple(@Valid @RequestBody LoginSocial dto) { return social.entrar(Provedor.APPLE, dto.token(), dto.nome()); }
+     @PostMapping("/login")
+     public Sessao login(@Valid @RequestBody Login dto) { return auth.login(dto); }
+     @PutMapping("/cpf")
+diff --git a/backend/src/main/java/br/com/fisioclinica/dto/AuthDtos.java b/backend/src/main/java/br/com/fisioclinica/dto/AuthDtos.java
+index d686f44..71a1189 100644
+--- a/backend/src/main/java/br/com/fisioclinica/dto/AuthDtos.java
++++ b/backend/src/main/java/br/com/fisioclinica/dto/AuthDtos.java
+@@ -20,6 +20,9 @@ public final class AuthDtos {
+     public record Recuperar(@NotBlank @Email @Size(max = 254) String email) {
+         @Override public String toString() { return "Recuperar[campos protegidos]"; }
+     }
++    public record LoginSocial(@NotBlank @Size(max = 4096) String token, @Size(max = 120) String nome) {
++        @Override public String toString() { return "LoginSocial[campos protegidos]"; }
++    }
+     public record InformarCpf(@NotBlank @Size(max = 14) String cpf) {
+         @Override public String toString() { return "InformarCpf[campos protegidos]"; }
+     }
+diff --git a/backend/src/main/java/br/com/fisioclinica/model/IdentidadeSocial.java b/backend/src/main/java/br/com/fisioclinica/model/IdentidadeSocial.java
+new file mode 100644
+index 0000000..8d08e0e
+--- /dev/null
++++ b/backend/src/main/java/br/com/fisioclinica/model/IdentidadeSocial.java
+@@ -0,0 +1,18 @@
++package br.com.fisioclinica.model;
++
++import jakarta.persistence.*;
++import lombok.*;
++import java.util.UUID;
++
++/** Liga uma conta do Google/Apple (pelo "sub" estável do provedor, nunca pelo e-mail) a um usuário. */
++@Entity @Table(name = "identidades_sociais") @Getter @Setter @NoArgsConstructor
++public class IdentidadeSocial {
++    @Id @GeneratedValue(strategy = GenerationType.UUID)
++    private UUID id;
++    @Enumerated(EnumType.STRING) @Column(nullable = false, length = 10)
++    private Provedor provedor;
++    @Column(nullable = false, length = 255)
++    private String subject;
++    @ManyToOne(fetch = FetchType.LAZY, optional = false) @JoinColumn(name = "usuario_id")
++    private Usuario usuario;
++}
+diff --git a/backend/src/main/java/br/com/fisioclinica/model/Provedor.java b/backend/src/main/java/br/com/fisioclinica/model/Provedor.java
+new file mode 100644
+index 0000000..b1d4557
+--- /dev/null
++++ b/backend/src/main/java/br/com/fisioclinica/model/Provedor.java
+@@ -0,0 +1,3 @@
++package br.com.fisioclinica.model;
++
++public enum Provedor { GOOGLE, APPLE }
+diff --git a/backend/src/main/java/br/com/fisioclinica/model/Usuario.java b/backend/src/main/java/br/com/fisioclinica/model/Usuario.java
+index bc3fa38..aeb2581 100644
+--- a/backend/src/main/java/br/com/fisioclinica/model/Usuario.java
++++ b/backend/src/main/java/br/com/fisioclinica/model/Usuario.java
+@@ -18,6 +18,8 @@ public class Usuario {
+     private long tokenVersion;
+     @Enumerated(EnumType.STRING) @Column(nullable = false, length = 10)
+     private Papel papel = Papel.CLIENTE;
++    @Column(nullable = false)
++    private boolean emailVerificado;
+     @Column(length = 200)
+     private String cpfCifrado;
+     @Column(length = 64)
+diff --git a/backend/src/main/java/br/com/fisioclinica/repository/IdentidadeSocialRepository.java b/backend/src/main/java/br/com/fisioclinica/repository/IdentidadeSocialRepository.java
+new file mode 100644
+index 0000000..cb800e9
+--- /dev/null
++++ b/backend/src/main/java/br/com/fisioclinica/repository/IdentidadeSocialRepository.java
+@@ -0,0 +1,10 @@
++package br.com.fisioclinica.repository;
++
++import br.com.fisioclinica.model.*;
++import org.springframework.data.jpa.repository.*;
++import java.util.*;
++
++public interface IdentidadeSocialRepository extends JpaRepository<IdentidadeSocial, UUID> {
++    @EntityGraph(attributePaths = "usuario")
++    Optional<IdentidadeSocial> findByProvedorAndSubject(Provedor provedor, String subject);
++}
+diff --git a/backend/src/main/java/br/com/fisioclinica/service/LoginSocialService.java b/backend/src/main/java/br/com/fisioclinica/service/LoginSocialService.java
+new file mode 100644
+index 0000000..ecef0ad
+--- /dev/null
++++ b/backend/src/main/java/br/com/fisioclinica/service/LoginSocialService.java
+@@ -0,0 +1,70 @@
++package br.com.fisioclinica.service;
++
++import br.com.fisioclinica.dto.AuthDtos.Sessao;
++import br.com.fisioclinica.exception.ApiException;
++import br.com.fisioclinica.model.*;
++import br.com.fisioclinica.repository.*;
++import org.springframework.http.HttpStatus;
++import org.springframework.security.crypto.password.PasswordEncoder;
++import org.springframework.stereotype.Service;
++import org.springframework.transaction.annotation.Transactional;
++import java.util.Map;
++import java.util.UUID;
++
++@Service
++public class LoginSocialService {
++    private final VerificadorIdentidade verificador;
++    private final IdentidadeSocialRepository identidades;
++    private final UsuarioRepository usuarios;
++    private final PasswordEncoder encoder;
++    private final TokenService tokens;
++
++    public LoginSocialService(VerificadorIdentidade verificador, IdentidadeSocialRepository identidades, UsuarioRepository usuarios,
++                              PasswordEncoder encoder, TokenService tokens) {
++        this.verificador = verificador; this.identidades = identidades; this.usuarios = usuarios; this.encoder = encoder; this.tokens = tokens;
++    }
++
++    public Map<String, String> provedores() { return verificador.clientes(); }
++
++    /**
++     * 1) Já vinculado: entra. 2) E-mail novo: cria a conta (CPF é pedido antes do primeiro agendamento).
++     * 3) E-mail de uma conta com senha ainda não verificada: vincula, mas troca a senha por uma aleatória e derruba as
++     * sessões, porque essa conta pode ter sido criada por outra pessoa com o e-mail alheio. Quem é dono do e-mail
++     * recupera o acesso por senha em "Esqueci minha senha".
++     */
++    @Transactional
++    public Sessao entrar(Provedor provedor, String token, String nomeInformado) {
++        var identidade = verificador.verificar(provedor, token);
++        if (!identidade.emailVerificado() || identidade.email() == null || identidade.subject() == null)
++            throw new ApiException(HttpStatus.UNAUTHORIZED, "O provedor não confirmou o seu e-mail.");
++        var existente = identidades.findByProvedorAndSubject(provedor, identidade.subject());
++        if (existente.isPresent()) return tokens.criar(existente.get().getUsuario());
++
++        String email = AuthService.normalizarEmail(identidade.email());
++        var usuario = usuarios.findByEmail(email).orElse(null);
++        if (usuario == null) {
++            usuario = new Usuario();
++            usuario.setNome(nome(identidade.nome(), nomeInformado, email));
++            usuario.setEmail(email);
++            usuario.setSenhaHash(encoder.encode(UUID.randomUUID().toString()));
++        } else if (!usuario.isEmailVerificado()) {
++            usuario.setSenhaHash(encoder.encode(UUID.randomUUID().toString()));
++            usuario.setTokenVersion(usuario.getTokenVersion() + 1);
++        }
++        usuario.setEmailVerificado(true);
++        usuario = usuarios.saveAndFlush(usuario);
++        var vinculo = new IdentidadeSocial();
++        vinculo.setProvedor(provedor);
++        vinculo.setSubject(identidade.subject());
++        vinculo.setUsuario(usuario);
++        identidades.save(vinculo);
++        return tokens.criar(usuario);
++    }
++
++    private static String nome(String doProvedor, String informado, String email) {
++        for (String candidato : new String[] {doProvedor, informado}) {
++            if (candidato != null && !candidato.isBlank()) return candidato.strip().substring(0, Math.min(120, candidato.strip().length()));
++        }
++        return email.substring(0, email.indexOf('@'));
++    }
++}
+diff --git a/backend/src/main/java/br/com/fisioclinica/service/VerificadorIdentidade.java b/backend/src/main/java/br/com/fisioclinica/service/VerificadorIdentidade.java
+new file mode 100644
+index 0000000..864766a
+--- /dev/null
++++ b/backend/src/main/java/br/com/fisioclinica/service/VerificadorIdentidade.java
+@@ -0,0 +1,14 @@
++package br.com.fisioclinica.service;
++
++import br.com.fisioclinica.model.Provedor;
++import java.util.Map;
++
++/** Confere o token de identidade (ID token) emitido pelo Google ou pela Apple. Nos testes é substituído por um falso. */
++public interface VerificadorIdentidade {
++    record Identidade(Provedor provedor, String subject, String email, boolean emailVerificado, String nome) {}
++
++    Identidade verificar(Provedor provedor, String token);
++
++    /** Client IDs públicos que o front usa para montar os botões; vazio = provedor desligado. */
++    default Map<String, String> clientes() { return Map.of(); }
++}
+diff --git a/backend/src/main/java/br/com/fisioclinica/service/VerificadorOidc.java b/backend/src/main/java/br/com/fisioclinica/service/VerificadorOidc.java
+new file mode 100644
+index 0000000..18876bd
+--- /dev/null
++++ b/backend/src/main/java/br/com/fisioclinica/service/VerificadorOidc.java
+@@ -0,0 +1,55 @@
++package br.com.fisioclinica.service;
++
++import br.com.fisioclinica.exception.ApiException;
++import br.com.fisioclinica.model.Provedor;
++import org.springframework.beans.factory.annotation.Value;
++import org.springframework.http.HttpStatus;
++import org.springframework.security.oauth2.core.*;
++import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
++import org.springframework.security.oauth2.jwt.*;
++import org.springframework.stereotype.Component;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++
++/** Valida assinatura (chaves públicas do provedor), emissor, público (client ID) e validade do ID token. */
++@Component
++public class VerificadorOidc implements VerificadorIdentidade {
++    private final Map<Provedor, String> clientes;
++    private final Map<Provedor, JwtDecoder> decoders = new ConcurrentHashMap<>();
++
++    public VerificadorOidc(@Value("${app.google.client-id:}") String google, @Value("${app.apple.client-id:}") String apple) {
++        clientes = Map.of(Provedor.GOOGLE, google.strip(), Provedor.APPLE, apple.strip());
++    }
++
++    @Override
++    public Identidade verificar(Provedor provedor, String token) {
++        String cliente = clientes.get(provedor);
++        if (cliente.isBlank()) throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "O login com " + (provedor == Provedor.GOOGLE ? "o Google" : "a Apple") + " não está configurado.");
++        try {
++            Jwt jwt = decoders.computeIfAbsent(provedor, p -> criar(p, cliente)).decode(token);
++            Object verificado = jwt.getClaim("email_verified");
++            return new Identidade(provedor, jwt.getSubject(), jwt.getClaimAsString("email"),
++                    Boolean.TRUE.equals(verificado) || "true".equals(String.valueOf(verificado)), jwt.getClaimAsString("name"));
++        } catch (JwtException ex) {
++            throw new ApiException(HttpStatus.UNAUTHORIZED, "Não foi possível validar o login com o provedor.");
++        }
++    }
++
++    @Override
++    public Map<String, String> clientes() {
++        return Map.of("google", clientes.get(Provedor.GOOGLE), "apple", clientes.get(Provedor.APPLE));
++    }
++
++    private static JwtDecoder criar(Provedor provedor, String cliente) {
++        boolean google = provedor == Provedor.GOOGLE;
++        var decoder = NimbusJwtDecoder.withJwkSetUri(google ? "https://www.googleapis.com/oauth2/v3/certs" : "https://appleid.apple.com/auth/keys")
++                .jwsAlgorithm(SignatureAlgorithm.RS256).build();
++        List<String> emissores = google ? List.of("https://accounts.google.com", "accounts.google.com") : List.of("https://appleid.apple.com");
++        OAuth2TokenValidator<Jwt> publico = jwt -> emissores.contains(jwt.getClaimAsString("iss")) && jwt.getAudience() != null && jwt.getAudience().contains(cliente)
++                ? OAuth2TokenValidatorResult.success()
++                : OAuth2TokenValidatorResult.failure(new OAuth2Error("invalid_token", "Emissor ou público inválido.", null));
++        decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(JwtValidators.createDefault(), publico));
++        return decoder;
++    }
++}
+diff --git a/backend/src/main/resources/application.yml b/backend/src/main/resources/application.yml
+index 7cbc156..1ae05d4 100644
+--- a/backend/src/main/resources/application.yml
++++ b/backend/src/main/resources/application.yml
+@@ -51,6 +51,10 @@ app:
+   admin-email: ${ADMIN_EMAIL:}
+   cpf:
+     key: ${CPF_KEY}
++  google:
++    client-id: ${GOOGLE_CLIENT_ID:}
++  apple:
++    client-id: ${APPLE_CLIENT_ID:}
+ springdoc:
+   api-docs:
+     enabled: ${SWAGGER_ENABLED:false}
+diff --git a/backend/src/main/resources/db/migration/V3__login_social.sql b/backend/src/main/resources/db/migration/V3__login_social.sql
+new file mode 100644
+index 0000000..23eea04
+--- /dev/null
++++ b/backend/src/main/resources/db/migration/V3__login_social.sql
+@@ -0,0 +1,11 @@
++-- Login com Google/Apple. email_verificado só vira true quando o provedor confirma o e-mail.
++-- Contas criadas com senha começam como não verificadas (ainda não há confirmação por e-mail).
++ALTER TABLE usuarios ADD COLUMN email_verificado BOOLEAN NOT NULL DEFAULT FALSE;
++CREATE TABLE identidades_sociais (
++    id UUID PRIMARY KEY,
++    provedor VARCHAR(10) NOT NULL CHECK (provedor IN ('GOOGLE', 'APPLE')),
++    subject VARCHAR(255) NOT NULL,
++    usuario_id UUID NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
++    CONSTRAINT identidade_unica UNIQUE (provedor, subject)
++);
++CREATE INDEX identidades_usuario_idx ON identidades_sociais(usuario_id);
+diff --git a/backend/src/test/java/br/com/fisioclinica/ApiIntegrationTest.java b/backend/src/test/java/br/com/fisioclinica/ApiIntegrationTest.java
+index 996eb4b..d361a69 100644
+--- a/backend/src/test/java/br/com/fisioclinica/ApiIntegrationTest.java
++++ b/backend/src/test/java/br/com/fisioclinica/ApiIntegrationTest.java
+@@ -262,4 +262,33 @@ class ApiIntegrationTest {
+         mvc.perform(post("/admin/profissionais").header("Authorization", bearer(bia)).contentType(MediaType.APPLICATION_JSON)
+                 .content("{\"nome\":\"X\",\"especialidade\":\"Y\"}")).andExpect(status().isForbidden());
+     }
++
++    /** Troca a validação real do Google/Apple por uma falsa: o token de teste é "sub|email|verificado|nome". */
++    @org.springframework.boot.test.context.TestConfiguration
++    static class VerificadorFalso {
++        @org.springframework.context.annotation.Bean @org.springframework.context.annotation.Primary
++        br.com.fisioclinica.service.VerificadorIdentidade verificador() {
++            return (provedor, token) -> {
++                String[] p = token.split("\\|", -1);
++                return new br.com.fisioclinica.service.VerificadorIdentidade.Identidade(provedor, p[0], p[1], Boolean.parseBoolean(p[2]), p[3].isEmpty() ? null : p[3]);
++            };
++        }
++    }
++    @Test void loginComGoogleCriaContaReconheceDepoisERecusaEmailNaoVerificado() throws Exception {
++        String corpo = "{\"token\":\"sub-g1|gente@example.com|true|Gente Boa\"}";
++        var primeira = json(mvc.perform(post("/auth/google").contentType(MediaType.APPLICATION_JSON).content(corpo)).andExpect(status().isOk()).andReturn());
++        assertThat(primeira.get("usuario").get("cpfPendente").asBoolean()).isTrue();
++        assertThat(primeira.get("usuario").get("papel").asText()).isEqualTo("CLIENTE");
++        var segunda = json(mvc.perform(post("/auth/google").contentType(MediaType.APPLICATION_JSON).content(corpo)).andExpect(status().isOk()).andReturn());
++        assertThat(segunda.get("usuario").get("id").asText()).isEqualTo(primeira.get("usuario").get("id").asText());
++        mvc.perform(post("/auth/google").contentType(MediaType.APPLICATION_JSON).content("{\"token\":\"sub-g2|outra@example.com|false|\"}"))
++                .andExpect(status().isUnauthorized());
++    }
++    @Test void loginSocialEmContaComSenhaNaoVerificadaTrocaASenhaEDerrubaSessoes() throws Exception {
++        mvc.perform(post("/auth/google").contentType(MediaType.APPLICATION_JSON).content("{\"token\":\"sub-a|alice@example.com|true|Alice\"}"))
++                .andExpect(status().isOk()).andExpect(jsonPath("$.usuario.email").value("alice@example.com"));
++        mvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON).content("{\"email\":\"alice@example.com\",\"senha\":\"senha-segura-123\"}"))
++                .andExpect(status().isUnauthorized());
++        mvc.perform(get("/agendamentos/meus").header("Authorization", bearer(alice))).andExpect(status().isUnauthorized());
++    }
+ }
+diff --git a/compose.yaml b/compose.yaml
+index c3ba10a..f99d338 100644
+--- a/compose.yaml
++++ b/compose.yaml
+@@ -26,6 +26,8 @@ services:
+       CPF_KEY: ${CPF_KEY:?Copie .env.example para .env e configure CPF_KEY}
+       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+       SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
++      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
++      APPLE_CLIENT_ID: ${APPLE_CLIENT_ID:-}
+       FRONTEND_URL: http://localhost:5173
+       SMTP_HOST: mailpit
+       DEMO_DATA: "true"
+diff --git a/frontend/nginx.conf b/frontend/nginx.conf
+index 3a492fd..516d975 100644
+--- a/frontend/nginx.conf
++++ b/frontend/nginx.conf
+@@ -6,7 +6,7 @@ server {
+     add_header Referrer-Policy no-referrer always;
+     add_header X-Frame-Options DENY always;
+     add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+-    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;
++    add_header Content-Security-Policy "default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client https://appleid.cdn-apple.com; style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style; img-src 'self' data:; font-src 'self'; connect-src 'self' https://accounts.google.com/gsi/ https://appleid.apple.com; frame-src https://accounts.google.com/gsi/ https://appleid.apple.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;
+     # Com HTTPS em produção, acrescente: add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+     location /api/ {
+         proxy_pass http://backend:8080/;
+diff --git a/frontend/src/app/auth-dialog.ts b/frontend/src/app/auth-dialog.ts
+index 6fecf3e..3fa6d4a 100644
+--- a/frontend/src/app/auth-dialog.ts
++++ b/frontend/src/app/auth-dialog.ts
+@@ -1,7 +1,8 @@
+-import { Component, ElementRef, afterNextRender, inject, input, linkedSignal, output, signal, viewChild } from '@angular/core';
++import { Component, ElementRef, afterNextRender, effect, inject, input, linkedSignal, output, signal, viewChild } from '@angular/core';
+ import { firstValueFrom } from 'rxjs';
+ import { Api, Session } from './api';
+ import { formatCpf } from './format';
++import { APPLE_JS, GOOGLE_JS, carregarScript } from './social';
+ import { ICONS } from './icons';
+ 
+ export type AuthMode = 'login' | 'register' | 'forgot' | 'reset';
+@@ -25,6 +26,13 @@ export type AuthMode = 'login' | 'register' | 'forgot' | 'reset';
+         @if (message()) { <p class="okmsg" role="status">{{ message() }}</p> }
+         <button class="btn btn--full" [disabled]="busy()">{{ busy() ? 'Aguarde…' : mode() === 'login' ? 'Entrar na minha conta' : mode() === 'register' ? 'Criar minha conta' : mode() === 'forgot' ? 'Enviar link' : 'Salvar nova senha' }}</button>
+       </form>
++      @if ((mode() === 'login' || mode() === 'register') && (prov().google || prov().apple)) {
++        <div class="social">
++          <p class="social__ou"><span>ou</span></p>
++          @if (prov().google) { <div #gbtn class="social__google"></div> }
++          @if (prov().apple) { <button type="button" class="btn btn--line btn--full" [disabled]="busy()" (click)="apple()">Continuar com a Apple</button> }
++        </div>
++      }
+       @if (mode() === 'login') { <button class="link center" (click)="go('forgot')">Esqueci minha senha</button> }
+       @if (mode() === 'forgot' || mode() === 'reset') { <button class="link center" (click)="go('login')">Voltar para o login</button> }
+     </dialog>
+@@ -44,7 +52,38 @@ export class AuthDialog {
+   message = signal('');
+   private dlg = viewChild.required<ElementRef<HTMLDialogElement>>('dlg');
+ 
+-  constructor() { afterNextRender(() => this.dlg().nativeElement.showModal()); }
++  protected prov = signal<{ google: string; apple: string }>({ google: '', apple: '' });
++  private gbtn = viewChild<ElementRef<HTMLElement>>('gbtn');
++
++  constructor() {
++    afterNextRender(() => this.dlg().nativeElement.showModal());
++    firstValueFrom(this.api.request<{ google: string; apple: string }>('GET', '/auth/provedores')).then(p => this.prov.set(p)).catch(() => undefined);
++    // Desenha o botão oficial do Google quando o contêiner aparece (login ou cadastro).
++    effect(() => {
++      const el = this.gbtn()?.nativeElement, id = this.prov().google;
++      if (!el || !id) return;
++      carregarScript(GOOGLE_JS).then(() => {
++        const g = (window as any).google.accounts.id;
++        g.initialize({ client_id: id, callback: (r: { credential: string }) => this.entrarSocial('google', r.credential) });
++        g.renderButton(el, { theme: 'outline', size: 'large', text: 'continue_with', locale: 'pt-BR', width: 320 });
++      }).catch(() => this.error.set('Não foi possível carregar o login do Google.'));
++    });
++  }
++  async entrarSocial(provedor: 'google' | 'apple', token: string, nome?: string) {
++    this.busy.set(true); this.error.set('');
++    try { this.done.emit(await firstValueFrom(this.api.request<Session>('POST', `/auth/${provedor}`, { token, nome }))); }
++    catch (e) { this.error.set((e as Error).message); } finally { this.busy.set(false); }
++  }
++  async apple() {
++    try {
++      await carregarScript(APPLE_JS);
++      const auth = (window as any).AppleID.auth;
++      auth.init({ clientId: this.prov().apple, scope: 'name email', redirectURI: location.origin, usePopup: true });
++      const r = await auth.signIn();
++      const n = r.user?.name;
++      await this.entrarSocial('apple', r.authorization.id_token, n ? `${n.firstName ?? ''} ${n.lastName ?? ''}`.trim() : undefined);
++    } catch (e) { if ((e as { error?: string })?.error !== 'popup_closed_by_user') this.error.set('Não foi possível entrar com a Apple.'); }
++  }
+   go(m: AuthMode) { this.mode.set(m); this.error.set(''); this.message.set(''); }
+   maskCpf(event: Event) { const el = event.target as HTMLInputElement; el.value = formatCpf(el.value); }
+   close() { if (!this.busy()) this.closed.emit(); }
+diff --git a/frontend/src/app/social.ts b/frontend/src/app/social.ts
+new file mode 100644
+index 0000000..ae3fad6
+--- /dev/null
++++ b/frontend/src/app/social.ts
+@@ -0,0 +1,17 @@
++/** Carrega, uma única vez, o script do Google ou da Apple. */
++const carregados = new Map<string, Promise<void>>();
++
++export function carregarScript(src: string): Promise<void> {
++  if (!carregados.has(src)) {
++    carregados.set(src, new Promise<void>((ok, erro) => {
++      const s = document.createElement('script');
++      s.src = src; s.async = true;
++      s.onload = () => ok();
++      s.onerror = () => { carregados.delete(src); erro(new Error('Falha ao carregar ' + src)); };
++      document.head.appendChild(s);
++    }));
++  }
++  return carregados.get(src)!;
++}
++export const GOOGLE_JS = 'https://accounts.google.com/gsi/client';
++export const APPLE_JS = 'https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js';
+diff --git a/frontend/src/styles.css b/frontend/src/styles.css
+index 3ec30e0..8886371 100644
+--- a/frontend/src/styles.css
++++ b/frontend/src/styles.css
+@@ -136,6 +136,11 @@ button:disabled { cursor: not-allowed; opacity: .5; }
+ .seg .is-on { background: var(--branco); color: var(--tinta); font-weight: 600; box-shadow: 0 1px 4px #1b243026; }
+ .okmsg { margin-bottom: 12px; padding: 10px 14px; border-radius: 10px; background: #e1f2e9; color: #14452c; }
+ 
++/* Login social */
++.social { display: grid; justify-items: center; gap: 10px; margin-top: 16px; }
++.social__ou { display: flex; align-items: center; gap: 12px; width: 100%; margin: 0; color: var(--suave); font-size: .85rem; }
++.social__ou::before, .social__ou::after { content: ''; flex: 1; height: 1px; background: var(--linha); }
++
+ /* Administração */
+ .adm { max-width: 900px; }
+ .adm .seg { max-width: 520px; grid-template-columns: repeat(3, 1fr); margin: 16px 0; }
+-- 
+2.43.0
+

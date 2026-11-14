@@ -1,0 +1,571 @@
+From 2580930b1c83f5f7781b7f019fa4c6daf30fc4fb Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 8 Nov 2026 01:32:30 +0000
+Subject: [PATCH] =?UTF-8?q?=C3=81rea=20do=20administrador:=20agendamentos,?=
+ =?UTF-8?q?=20profissionais=20e=20hor=C3=A1rios?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ README.md                                     |   1 +
+ .../fisioclinica/config/SecurityConfig.java   |   2 +-
+ .../controller/AdminController.java           |  38 ++++-
+ .../br/com/fisioclinica/dto/AdminDtos.java    |  22 +++
+ .../repository/AgendamentoRepository.java     |   6 +
+ .../repository/HorarioRepository.java         |   4 +
+ .../fisioclinica/service/AdminService.java    |  77 ++++++++-
+ .../com/fisioclinica/ApiIntegrationTest.java  |  28 ++++
+ frontend/src/app/admin.ts                     | 152 ++++++++++++++++++
+ frontend/src/app/api.ts                       |   3 +
+ frontend/src/app/app.ts                       |   9 +-
+ frontend/src/styles.css                       |  13 +-
+ 12 files changed, 344 insertions(+), 11 deletions(-)
+ create mode 100644 backend/src/main/java/br/com/fisioclinica/dto/AdminDtos.java
+ create mode 100644 frontend/src/app/admin.ts
+
+diff --git a/README.md b/README.md
+index 436185b..718210e 100644
+--- a/README.md
++++ b/README.md
+@@ -223,6 +223,7 @@ Comece o estudo pelo [roteiro de aprendizado](docs/aprendizado.md). As credencia
+ 
+ - **CPF:** obrigatório no cadastro, validado pelos dígitos e único por conta. Fica cifrado (AES-GCM) no banco, com um hash com chave só para barrar duplicidade, e a API só o devolve mascarado. A chave é `CPF_KEY` (gere uma aleatória; não troque depois de ter usuários nem publique). Contas anteriores informam o CPF no próximo agendamento.
+ - **Administrador:** defina `ADMIN_EMAIL`. Ao iniciar, o servidor cria ou promove essa conta, troca a senha por uma aleatória e derruba sessões antigas. Quem controla a caixa de e-mail define a senha em "Esqueci minha senha". O papel fica no banco e as rotas `/admin/**` exigem `ADMIN` no servidor.
++- **Área do administrador:** a aba "Administração" só aparece para o papel `ADMIN`, mas quem protege é o servidor (`/admin/**`). Lista todos os agendamentos (CPF mascarado) e cancela, cadastra profissionais e cria ou remove horários. Cada alteração gera uma linha `auditoria admin=...` no log. Horários reservados ou com histórico de agendamento não podem ser removidos.
+ - **Tentativas de login:** 5 erros seguidos para o mesmo e-mail bloqueiam novas tentativas por 15 minutos (o controle fica na memória e reinicia com o servidor).
+ - **Swagger:** desligado por padrão. Ative com `SWAGGER_ENABLED=true` apenas em desenvolvimento.
+ - **Nginx:** envia CSP, Permissions-Policy e X-Forwarded-For. Em produção, use HTTPS e ative o HSTS indicado em `frontend/nginx.conf`.
+diff --git a/backend/src/main/java/br/com/fisioclinica/config/SecurityConfig.java b/backend/src/main/java/br/com/fisioclinica/config/SecurityConfig.java
+index e2575f6..a565ce8 100644
+--- a/backend/src/main/java/br/com/fisioclinica/config/SecurityConfig.java
++++ b/backend/src/main/java/br/com/fisioclinica/config/SecurityConfig.java
+@@ -80,7 +80,7 @@ public class SecurityConfig {
+     @Bean CorsConfigurationSource cors(@Value("${app.frontend-url}") String origin) {
+         var config = new CorsConfiguration();
+         config.setAllowedOrigins(List.of(origin));
+-        config.setAllowedMethods(List.of("GET", "POST", "PUT", "OPTIONS"));
++        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+         config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+         var source = new UrlBasedCorsConfigurationSource();
+         source.registerCorsConfiguration("/**", config);
+diff --git a/backend/src/main/java/br/com/fisioclinica/controller/AdminController.java b/backend/src/main/java/br/com/fisioclinica/controller/AdminController.java
+index c1c5d59..3317137 100644
+--- a/backend/src/main/java/br/com/fisioclinica/controller/AdminController.java
++++ b/backend/src/main/java/br/com/fisioclinica/controller/AdminController.java
+@@ -1,16 +1,26 @@
+ package br.com.fisioclinica.controller;
+ 
++import br.com.fisioclinica.dto.AdminDtos.*;
+ import br.com.fisioclinica.dto.AgendaDtos.Pagina;
++import br.com.fisioclinica.dto.AgendaDtos.ProfissionalResposta;
+ import br.com.fisioclinica.service.AdminService;
+ import br.com.fisioclinica.service.AdminService.AgendamentoAdmin;
+ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
++import jakarta.validation.Valid;
+ import jakarta.validation.constraints.*;
+ import lombok.RequiredArgsConstructor;
++import lombok.extern.slf4j.Slf4j;
++import org.springframework.format.annotation.DateTimeFormat;
++import org.springframework.http.HttpStatus;
++import org.springframework.security.core.annotation.AuthenticationPrincipal;
++import org.springframework.security.oauth2.jwt.Jwt;
+ import org.springframework.validation.annotation.Validated;
+ import org.springframework.web.bind.annotation.*;
++import java.time.LocalDate;
++import java.util.*;
+ 
+-/** Rotas exclusivas do administrador. O acesso é exigido em SecurityConfig (/admin/** exige o papel ADMIN). */
+-@RestController @RequestMapping("/admin") @RequiredArgsConstructor @Validated
++/** Rotas exclusivas do administrador (SecurityConfig exige o papel ADMIN em /admin/**). Cada alteração fica no log. */
++@RestController @RequestMapping("/admin") @RequiredArgsConstructor @Validated @Slf4j
+ @SecurityRequirement(name = "bearerAuth")
+ public class AdminController {
+     private final AdminService admin;
+@@ -20,4 +30,28 @@ public class AdminController {
+                                                  @RequestParam(defaultValue = "20") @Min(1) @Max(100) int tamanho) {
+         return admin.agendamentos(pagina, tamanho);
+     }
++    @PutMapping("/agendamentos/{id}/cancelar")
++    public AgendamentoAdmin cancelar(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID id) {
++        log.info("auditoria admin={} acao=cancelar-agendamento id={}", jwt.getSubject(), id);
++        return admin.cancelar(id);
++    }
++    @PostMapping("/profissionais") @ResponseStatus(HttpStatus.CREATED)
++    public ProfissionalResposta criarProfissional(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody NovoProfissional dto) {
++        log.info("auditoria admin={} acao=criar-profissional", jwt.getSubject());
++        return admin.criarProfissional(dto);
++    }
++    @GetMapping("/horarios")
++    public List<HorarioAdmin> horarios(@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate data) {
++        return admin.horariosDoDia(data);
++    }
++    @PostMapping("/horarios") @ResponseStatus(HttpStatus.CREATED)
++    public List<HorarioAdmin> criarHorarios(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody NovosHorarios dto) {
++        log.info("auditoria admin={} acao=criar-horarios profissional={} data={} quantidade={}", jwt.getSubject(), dto.profissionalId(), dto.data(), dto.inicios().size());
++        return admin.criarHorarios(dto);
++    }
++    @DeleteMapping("/horarios/{id}") @ResponseStatus(HttpStatus.NO_CONTENT)
++    public void removerHorario(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID id) {
++        log.info("auditoria admin={} acao=remover-horario id={}", jwt.getSubject(), id);
++        admin.removerHorario(id);
++    }
+ }
+diff --git a/backend/src/main/java/br/com/fisioclinica/dto/AdminDtos.java b/backend/src/main/java/br/com/fisioclinica/dto/AdminDtos.java
+new file mode 100644
+index 0000000..2f93737
+--- /dev/null
++++ b/backend/src/main/java/br/com/fisioclinica/dto/AdminDtos.java
+@@ -0,0 +1,22 @@
++package br.com.fisioclinica.dto;
++
++import br.com.fisioclinica.dto.AgendaDtos.HorarioResposta;
++import br.com.fisioclinica.model.*;
++import jakarta.validation.constraints.*;
++import java.time.*;
++import java.util.*;
++
++public final class AdminDtos {
++    private AdminDtos() {}
++
++    public record NovoProfissional(@NotBlank @Size(max = 120) String nome, @NotBlank @Size(max = 120) String especialidade) {}
++
++    /** Cria vários horários de um profissional no mesmo dia: cada início ganha a mesma duração. */
++    public record NovosHorarios(@NotNull UUID profissionalId, @NotNull LocalDate data, @NotNull TipoSessao tipoSessao,
++                                @NotEmpty @Size(max = 24) List<@NotNull LocalTime> inicios,
++                                @Min(10) @Max(180) int duracaoMinutos) {}
++
++    public record HorarioAdmin(HorarioResposta horario, StatusHorario status) {
++        public static HorarioAdmin from(Horario h) { return new HorarioAdmin(HorarioResposta.from(h), h.getStatus()); }
++    }
++}
+diff --git a/backend/src/main/java/br/com/fisioclinica/repository/AgendamentoRepository.java b/backend/src/main/java/br/com/fisioclinica/repository/AgendamentoRepository.java
+index 6e5d345..e00baf1 100644
+--- a/backend/src/main/java/br/com/fisioclinica/repository/AgendamentoRepository.java
++++ b/backend/src/main/java/br/com/fisioclinica/repository/AgendamentoRepository.java
+@@ -13,6 +13,12 @@ public interface AgendamentoRepository extends JpaRepository<Agendamento, UUID>
+     @EntityGraph(attributePaths = {"horario", "horario.profissional", "cliente"})
+     Page<Agendamento> findAllBy(Pageable pageable);
+ 
++    boolean existsByHorarioId(UUID horarioId);
++
++    @Lock(LockModeType.PESSIMISTIC_WRITE)
++    @Query("select a from Agendamento a where a.id = :id")
++    Optional<Agendamento> findLockedById(UUID id);
++
+     @Lock(LockModeType.PESSIMISTIC_WRITE)
+     @Query("select a from Agendamento a where a.id = :id and a.cliente.id = :clienteId")
+     Optional<Agendamento> findOwnedLocked(UUID id, UUID clienteId);
+diff --git a/backend/src/main/java/br/com/fisioclinica/repository/HorarioRepository.java b/backend/src/main/java/br/com/fisioclinica/repository/HorarioRepository.java
+index daa1480..3dce0cd 100644
+--- a/backend/src/main/java/br/com/fisioclinica/repository/HorarioRepository.java
++++ b/backend/src/main/java/br/com/fisioclinica/repository/HorarioRepository.java
+@@ -19,6 +19,10 @@ public interface HorarioRepository extends JpaRepository<Horario, UUID> {
+     List<Horario> disponiveis(LocalDate data, LocalDate hoje, LocalTime agora,
+                              UUID profissionalId, TipoSessao tipoSessao, Pageable pageable);
+ 
++    @Query("select h from Horario h join fetch h.profissional where h.data = :data order by h.horaInicio, h.profissional.nome")
++    List<Horario> doDia(LocalDate data);
++    List<Horario> findByProfissionalIdAndData(UUID profissionalId, LocalDate data);
++
+     @Lock(LockModeType.PESSIMISTIC_WRITE)
+     @Query("select h from Horario h where h.id = :id")
+     Optional<Horario> findLockedById(UUID id);
+diff --git a/backend/src/main/java/br/com/fisioclinica/service/AdminService.java b/backend/src/main/java/br/com/fisioclinica/service/AdminService.java
+index d714402..e8cc3e0 100644
+--- a/backend/src/main/java/br/com/fisioclinica/service/AdminService.java
++++ b/backend/src/main/java/br/com/fisioclinica/service/AdminService.java
+@@ -1,16 +1,24 @@
+ package br.com.fisioclinica.service;
+ 
++import br.com.fisioclinica.dto.AdminDtos.*;
+ import br.com.fisioclinica.dto.AgendaDtos.*;
+-import br.com.fisioclinica.repository.AgendamentoRepository;
++import br.com.fisioclinica.exception.ApiException;
++import br.com.fisioclinica.model.*;
++import br.com.fisioclinica.repository.*;
+ import lombok.RequiredArgsConstructor;
+ import org.springframework.data.domain.*;
+ import org.springframework.stereotype.Service;
+ import org.springframework.transaction.annotation.Transactional;
++import java.time.*;
++import java.util.*;
+ 
+ @Service @RequiredArgsConstructor
+ public class AdminService {
+     private final AgendamentoRepository agendamentos;
++    private final HorarioRepository horarios;
++    private final ProfissionalRepository profissionais;
+     private final CpfCofre cofre;
++    private final Clock clock;
+ 
+     /** O CPF sai sempre mascarado, mesmo para o administrador. */
+     public record AgendamentoAdmin(AgendamentoResposta agendamento, String clienteNome, String clienteEmail, String clienteCpf) {}
+@@ -19,9 +27,70 @@ public class AdminService {
+     public Pagina<AgendamentoAdmin> agendamentos(int pagina, int tamanho) {
+         var result = agendamentos.findAllBy(PageRequest.of(pagina, tamanho, Sort.by(Sort.Order.desc("horario.data"),
+                 Sort.Order.desc("horario.horaInicio"), Sort.Order.asc("id"))));
+-        var itens = result.getContent().stream().map(a -> new AgendamentoAdmin(AgendamentoResposta.from(a),
+-                a.getCliente().getNome(), a.getCliente().getEmail(),
+-                a.getCliente().getCpfCifrado() == null ? null : Cpf.mascarar(cofre.decifrar(a.getCliente().getCpfCifrado())))).toList();
++        var itens = result.getContent().stream().map(this::paraAdmin).toList();
+         return new Pagina<>(itens, pagina, tamanho, result.getTotalElements(), result.getTotalPages());
+     }
++
++    @Transactional
++    public AgendamentoAdmin cancelar(UUID id) {
++        var reserva = agendamentos.findLockedById(id).orElseThrow(() -> ApiException.notFound("Agendamento não encontrado."));
++        if (reserva.getStatus() == StatusAgendamento.CANCELADO) throw ApiException.conflict("Este agendamento já foi cancelado.");
++        var horario = horarios.findLockedById(reserva.getHorario().getId()).orElseThrow(() -> ApiException.notFound("Horário não encontrado."));
++        reserva.setStatus(StatusAgendamento.CANCELADO);
++        horario.setStatus(StatusHorario.DISPONIVEL);
++        agendamentos.flush();
++        return paraAdmin(reserva);
++    }
++
++    @Transactional
++    public ProfissionalResposta criarProfissional(NovoProfissional dto) {
++        var profissional = new Profissional();
++        profissional.setNome(dto.nome().strip());
++        profissional.setEspecialidade(dto.especialidade().strip());
++        return ProfissionalResposta.from(profissionais.save(profissional));
++    }
++
++    @Transactional(readOnly = true)
++    public List<HorarioAdmin> horariosDoDia(LocalDate data) {
++        return horarios.doDia(data).stream().map(HorarioAdmin::from).toList();
++    }
++
++    /** Tudo ou nada: se um horário passou, termina depois da meia-noite ou se sobrepõe a outro, nenhum é criado. */
++    @Transactional
++    public List<HorarioAdmin> criarHorarios(NovosHorarios dto) {
++        var profissional = profissionais.findById(dto.profissionalId()).orElseThrow(() -> ApiException.notFound("Profissional não encontrado."));
++        var agora = LocalDateTime.now(clock);
++        var ocupados = new ArrayList<>(horarios.findByProfissionalIdAndData(profissional.getId(), dto.data()));
++        var novos = new ArrayList<Horario>();
++        for (LocalTime inicio : dto.inicios().stream().distinct().sorted().toList()) {
++            LocalTime fim = inicio.plusMinutes(dto.duracaoMinutos());
++            if (!fim.isAfter(inicio)) throw ApiException.badRequest("O horário das " + inicio + " termina depois da meia-noite.");
++            if (!LocalDateTime.of(dto.data(), inicio).isAfter(agora)) throw ApiException.badRequest("O horário das " + inicio + " já passou.");
++            if (ocupados.stream().anyMatch(o -> inicio.isBefore(o.getHoraFim()) && fim.isAfter(o.getHoraInicio())))
++                throw ApiException.conflict("O horário das " + inicio + " se sobrepõe a outro deste profissional.");
++            var horario = new Horario();
++            horario.setProfissional(profissional);
++            horario.setData(dto.data());
++            horario.setHoraInicio(inicio);
++            horario.setHoraFim(fim);
++            horario.setTipoSessao(dto.tipoSessao());
++            novos.add(horario);
++            ocupados.add(horario);
++        }
++        return horarios.saveAll(novos).stream().map(HorarioAdmin::from).toList();
++    }
++
++    @Transactional
++    public void removerHorario(UUID id) {
++        var horario = horarios.findLockedById(id).orElseThrow(() -> ApiException.notFound("Horário não encontrado."));
++        if (horario.getStatus() != StatusHorario.DISPONIVEL) throw ApiException.conflict("Cancele o agendamento antes de remover este horário.");
++        if (agendamentos.existsByHorarioId(id)) throw ApiException.conflict("Este horário tem histórico de agendamentos e não pode ser removido.");
++        horarios.delete(horario);
++    }
++
++    private AgendamentoAdmin paraAdmin(Agendamento a) {
++        var cliente = a.getCliente();
++        return new AgendamentoAdmin(AgendamentoResposta.from(a), cliente.getNome(), cliente.getEmail(),
++                cliente.getCpfCifrado() == null ? null : Cpf.mascarar(cofre.decifrar(cliente.getCpfCifrado())));
++    }
+ }
+diff --git a/backend/src/test/java/br/com/fisioclinica/ApiIntegrationTest.java b/backend/src/test/java/br/com/fisioclinica/ApiIntegrationTest.java
+index e94514b..996eb4b 100644
+--- a/backend/src/test/java/br/com/fisioclinica/ApiIntegrationTest.java
++++ b/backend/src/test/java/br/com/fisioclinica/ApiIntegrationTest.java
+@@ -234,4 +234,32 @@ class ApiIntegrationTest {
+             mvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON).content(ruim)).andExpect(status().isUnauthorized());
+         mvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON).content(ruim)).andExpect(status().isTooManyRequests());
+     }
++    @Test void adminGerenciaProfissionaisHorariosEAgendamentos() throws Exception {
++        jdbc.update("update fisio.usuarios set papel = 'ADMIN' where email = 'alice@example.com'");
++        String auth = bearer(alice);
++        var dia = LocalDate.now(clock).plusDays(3);
++        var pro = json(mvc.perform(post("/admin/profissionais").header("Authorization", auth).contentType(MediaType.APPLICATION_JSON)
++                .content("{\"nome\":\"Nova Pessoa\",\"especialidade\":\"Pilates\"}")).andExpect(status().isCreated()).andReturn());
++        String corpo = "{\"profissionalId\":\"" + pro.get("id").asText() + "\",\"data\":\"" + dia + "\",\"tipoSessao\":\"PILATES\",\"inicios\":[\"08:00\",\"09:00\"],\"duracaoMinutos\":50}";
++        var criados = json(mvc.perform(post("/admin/horarios").header("Authorization", auth).contentType(MediaType.APPLICATION_JSON).content(corpo))
++                .andExpect(status().isCreated()).andReturn());
++        assertThat(criados).hasSize(2);
++        mvc.perform(post("/admin/horarios").header("Authorization", auth).contentType(MediaType.APPLICATION_JSON).content(corpo)).andExpect(status().isConflict());
++        mvc.perform(post("/admin/horarios").header("Authorization", auth).contentType(MediaType.APPLICATION_JSON)
++                .content(corpo.replace("\"08:00\",\"09:00\"", "\"08:30\""))).andExpect(status().isConflict());
++        mvc.perform(get("/admin/horarios").param("data", dia.toString()).header("Authorization", auth))
++                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(2));
++
++        var bia = cadastrar("bia@example.com");
++        String reservadoId = criados.get(0).get("horario").get("id").asText();
++        var reserva = reservar(bia, UUID.fromString(reservadoId));
++        mvc.perform(delete("/admin/horarios/" + reservadoId).header("Authorization", auth)).andExpect(status().isConflict());
++        mvc.perform(put("/admin/agendamentos/" + reserva.get("id").asText() + "/cancelar").header("Authorization", auth))
++                .andExpect(status().isOk()).andExpect(jsonPath("$.agendamento.status").value("CANCELADO"));
++        mvc.perform(delete("/admin/horarios/" + reservadoId).header("Authorization", auth)).andExpect(status().isConflict()); // tem histórico
++        mvc.perform(delete("/admin/horarios/" + criados.get(1).get("horario").get("id").asText()).header("Authorization", auth))
++                .andExpect(status().isNoContent());
++        mvc.perform(post("/admin/profissionais").header("Authorization", bearer(bia)).contentType(MediaType.APPLICATION_JSON)
++                .content("{\"nome\":\"X\",\"especialidade\":\"Y\"}")).andExpect(status().isForbidden());
++    }
+ }
+diff --git a/frontend/src/app/admin.ts b/frontend/src/app/admin.ts
+new file mode 100644
+index 0000000..4e992c0
+--- /dev/null
++++ b/frontend/src/app/admin.ts
+@@ -0,0 +1,152 @@
++import { Component, inject, signal } from '@angular/core';
++import { Observable, firstValueFrom } from 'rxjs';
++import { Api, AgendamentoAdmin, HorarioAdmin, PageAdmin, Pro } from './api';
++import { addDays, clinicToday, dateLabel, hour, sessionBand, sessionNames } from './format';
++
++type Aba = 'agendamentos' | 'horarios' | 'profissionais';
++
++/** Área exclusiva do administrador. O servidor confere o papel ADMIN em cada chamada; esconder a aba é só conveniência. */
++@Component({
++  selector: 'app-admin',
++  template: `
++    <section class="mine adm" aria-label="Administração">
++      <h1>Administração</h1>
++      <div class="seg" role="group" aria-label="Seções">
++        @for (a of abas; track a[0]) { <button [class.is-on]="aba() === a[0]" [attr.aria-pressed]="aba() === a[0]" (click)="aba.set(a[0])">{{ a[1] }}</button> }
++      </div>
++      @if (ok()) { <div class="notice" role="status"><span>{{ ok() }}</span><button class="link" (click)="ok.set('')">Fechar</button></div> }
++      @if (erro()) { <div class="alert" role="alert">{{ erro() }}</div> }
++
++      @switch (aba()) {
++        @case ('agendamentos') {
++          @if (lista(); as l) {
++            @if (!l.itens.length) { <div class="empty"><h3>Nenhum agendamento ainda.</h3></div> }
++            <ul class="rows">
++              @for (a of l.itens; track a.agendamento.id) {
++                <li class="row">
++                  <div class="when"><strong>{{ a.agendamento.horario.data.slice(8) }}</strong><span>{{ mes(a.agendamento.horario.data) }}</span></div>
++                  <div class="what">
++                    <p class="what__t"><i class="band band--{{ bands[a.agendamento.horario.tipoSessao] }}"></i>{{ names[a.agendamento.horario.tipoSessao] }}
++                      <span class="status" [class.is-off]="a.agendamento.status === 'CANCELADO'">{{ a.agendamento.status === 'CONFIRMADO' ? 'Confirmado' : 'Cancelado' }}</span></p>
++                    <p>{{ hr(a.agendamento.horario.horaInicio) }} com {{ a.agendamento.horario.profissional.nome }}</p>
++                    <p class="obs">{{ a.clienteNome }}, {{ a.clienteEmail }}, CPF {{ a.clienteCpf ?? 'não informado' }}</p>
++                  </div>
++                  @if (a.agendamento.status === 'CONFIRMADO') {
++                    <div class="row__act">
++                      @if (confirmando() === a.agendamento.id) {
++                        <button class="btn btn--danger" [disabled]="busy()" (click)="cancelar(a)">Confirmar cancelamento</button>
++                        <button class="link" (click)="confirmando.set(null)">Voltar</button>
++                      } @else { <button class="link link--danger" (click)="confirmando.set(a.agendamento.id)">Cancelar</button> }
++                    </div>
++                  }
++                </li>
++              }
++            </ul>
++            @if (l.totalPaginas > 1) {
++              <div class="pager"><button class="btn btn--line" [disabled]="pagina() === 0" (click)="irPara(pagina() - 1)">Anterior</button><span>Página {{ pagina() + 1 }} de {{ l.totalPaginas }}</span><button class="btn btn--line" [disabled]="pagina() + 1 >= l.totalPaginas" (click)="irPara(pagina() + 1)">Próxima</button></div>
++            }
++          }
++        }
++        @case ('horarios') {
++          <form class="form-grid" (submit)="criarHorarios($event)">
++            <label class="field"><span>Data</span><input type="date" [min]="hoje" [value]="dia()" (change)="mudarDia($any($event.target).value)" required /></label>
++            <label class="field"><span>Profissional</span><select name="profissionalId" required>@for (p of pros(); track p.id) { <option [value]="p.id">{{ p.nome }}</option> }</select></label>
++            <label class="field"><span>Tipo de sessão</span><select name="tipoSessao">@for (t of tipos; track t[0]) { <option [value]="t[0]">{{ t[1] }}</option> }</select></label>
++            <label class="field"><span>Inícios (separe por vírgula)</span><input name="inicios" required placeholder="08:00, 09:00, 14:30" autocomplete="off" /></label>
++            <label class="field"><span>Duração (min)</span><input name="duracao" type="number" min="10" max="180" value="50" required /></label>
++            <button class="btn" [disabled]="busy() || !pros().length">Criar horários</button>
++          </form>
++          <h2 class="dayline">{{ diaLongo() }}<span>{{ slots().length === 1 ? '1 horário' : slots().length + ' horários' }}</span></h2>
++          @if (!slots().length) { <div class="empty"><p>Nenhum horário neste dia.</p></div> }
++          <ul class="rows">
++            @for (s of slots(); track s.horario.id) {
++              <li class="row row--time">
++                <div class="when"><strong>{{ hr(s.horario.horaInicio) }}</strong><span>até {{ hr(s.horario.horaFim) }}</span></div>
++                <div class="what"><p class="what__t"><i class="band band--{{ bands[s.horario.tipoSessao] }}"></i>{{ names[s.horario.tipoSessao] }}
++                  <span class="status" [class.is-off]="s.status === 'RESERVADO'">{{ s.status === 'RESERVADO' ? 'Reservado' : 'Livre' }}</span></p><p>{{ s.horario.profissional.nome }}</p></div>
++                @if (s.status === 'DISPONIVEL') { <div class="row__act"><button class="link link--danger" [disabled]="busy()" (click)="remover(s)">Remover</button></div> }
++              </li>
++            }
++          </ul>
++        }
++        @case ('profissionais') {
++          <form class="form-grid" (submit)="criarProfissional($event)">
++            <label class="field"><span>Nome</span><input name="nome" required maxlength="120" autocomplete="off" /></label>
++            <label class="field"><span>Especialidade</span><input name="especialidade" required maxlength="120" autocomplete="off" /></label>
++            <button class="btn" [disabled]="busy()">Cadastrar profissional</button>
++          </form>
++          <ul class="rows">
++            @for (p of pros(); track p.id) { <li class="row row--simple"><div class="what"><p class="what__t">{{ p.nome }}</p></div></li> }
++          </ul>
++        }
++      }
++    </section>
++  `,
++})
++export class Admin {
++  private api = inject(Api);
++  protected hoje = clinicToday();
++  protected names = sessionNames;
++  protected bands = sessionBand;
++  protected tipos = Object.entries(sessionNames);
++  protected hr = hour;
++  protected abas: [Aba, string][] = [['agendamentos', 'Agendamentos'], ['horarios', 'Horários'], ['profissionais', 'Profissionais']];
++  aba = signal<Aba>('agendamentos');
++  lista = signal<PageAdmin | null>(null);
++  pagina = signal(0);
++  confirmando = signal<string | null>(null);
++  pros = signal<Pro[]>([]);
++  dia = signal(addDays(clinicToday(), 1));
++  slots = signal<HorarioAdmin[]>([]);
++  erro = signal('');
++  ok = signal('');
++  busy = signal(false);
++
++  constructor() { this.carregarAgendamentos(); this.carregarProfissionais(); this.carregarHorarios(); }
++
++  mes(d: string) { return dateLabel(d, { month: 'short' }).replace('.', ''); }
++  diaLongo() { const t = dateLabel(this.dia(), { weekday: 'long', day: 'numeric', month: 'long' }); return t.charAt(0).toUpperCase() + t.slice(1); }
++
++  private async chamar<T>(req: Observable<T>): Promise<T | undefined> {
++    this.erro.set(''); this.busy.set(true);
++    try { return await firstValueFrom(req); } catch (e) { this.erro.set((e as Error).message); return undefined; } finally { this.busy.set(false); }
++  }
++  async carregarAgendamentos() {
++    const r = await this.chamar(this.api.request<PageAdmin>('GET', `/admin/agendamentos?pagina=${this.pagina()}&tamanho=10`));
++    if (r) this.lista.set(r);
++  }
++  irPara(p: number) { this.pagina.set(p); this.carregarAgendamentos(); }
++  async cancelar(a: AgendamentoAdmin) {
++    this.ok.set('');
++    const r = await this.chamar(this.api.request('PUT', `/admin/agendamentos/${a.agendamento.id}/cancelar`));
++    this.confirmando.set(null);
++    if (r) { this.ok.set('Agendamento cancelado. O horário voltou a ficar livre.'); this.carregarAgendamentos(); this.carregarHorarios(); }
++  }
++  async carregarProfissionais() { const r = await this.chamar(this.api.request<Pro[]>('GET', '/profissionais')); if (r) this.pros.set(r); }
++  async carregarHorarios() { const r = await this.chamar(this.api.request<HorarioAdmin[]>('GET', `/admin/horarios?data=${this.dia()}`)); if (r) this.slots.set(r); }
++  mudarDia(valor: string) { if (valor) { this.dia.set(valor); this.carregarHorarios(); } }
++
++  async criarHorarios(event: Event) {
++    event.preventDefault();
++    this.ok.set('');
++    const f = new FormData(event.target as HTMLFormElement);
++    const inicios = String(f.get('inicios')).split(/[\s,;]+/).filter(Boolean);
++    if (!inicios.length || inicios.some(i => !/^([01]\d|2[0-3]):[0-5]\d$/.test(i))) { this.ok.set(''); this.erro.set('Informe os inícios no formato 08:00, 09:00.'); return; }
++    const corpo = { profissionalId: f.get('profissionalId'), data: this.dia(), tipoSessao: f.get('tipoSessao'), inicios, duracaoMinutos: Number(f.get('duracao')) };
++    const r = await this.chamar(this.api.request<HorarioAdmin[]>('POST', '/admin/horarios', corpo));
++    if (r) { this.ok.set(r.length === 1 ? '1 horário criado.' : `${r.length} horários criados.`); this.carregarHorarios(); }
++  }
++  async remover(s: HorarioAdmin) {
++    this.ok.set('');
++    const r = await this.chamar(this.api.request('DELETE', `/admin/horarios/${s.horario.id}`));
++    if (r !== undefined || !this.erro()) { this.ok.set('Horário removido.'); this.carregarHorarios(); }
++  }
++  async criarProfissional(event: Event) {
++    event.preventDefault();
++    this.ok.set('');
++    const form = event.target as HTMLFormElement;
++    const f = new FormData(form);
++    const r = await this.chamar(this.api.request<Pro>('POST', '/admin/profissionais', { nome: f.get('nome'), especialidade: f.get('especialidade') }));
++    if (r) { form.reset(); this.ok.set('Profissional cadastrado.'); this.carregarProfissionais(); }
++  }
++}
+diff --git a/frontend/src/app/api.ts b/frontend/src/app/api.ts
+index cbbbdf9..d95b497 100644
+--- a/frontend/src/app/api.ts
++++ b/frontend/src/app/api.ts
+@@ -7,6 +7,9 @@ export interface Slot { id: string; data: string; horaInicio: string; horaFim: s
+ export interface Appointment { id: string; status: 'CONFIRMADO' | 'CANCELADO'; observacoes?: string; horario: Slot; }
+ export interface Page { itens: Appointment[]; totalPaginas: number; }
+ export interface Usuario { id: string; nome: string; email: string; papel: 'CLIENTE' | 'ADMIN'; cpfPendente: boolean; }
++export interface AgendamentoAdmin { agendamento: Appointment; clienteNome: string; clienteEmail: string; clienteCpf: string | null; }
++export interface PageAdmin { itens: AgendamentoAdmin[]; totalPaginas: number; }
++export interface HorarioAdmin { horario: Slot; status: 'DISPONIVEL' | 'RESERVADO'; }
+ export interface Session { accessToken: string; usuario: Usuario; }
+ 
+ export class ApiError extends Error {
+diff --git a/frontend/src/app/app.ts b/frontend/src/app/app.ts
+index 383d0cd..1fe3da0 100644
+--- a/frontend/src/app/app.ts
++++ b/frontend/src/app/app.ts
+@@ -2,18 +2,20 @@ import { Component, effect, inject, signal } from '@angular/core';
+ import { Api, Appointment, Session } from './api';
+ import { Appointments } from './appointments';
+ import { AuthDialog, AuthMode } from './auth-dialog';
++import { Admin } from './admin';
+ import { Booking } from './booking';
+ import { ICONS } from './icons';
+ 
+ @Component({
+   selector: 'app-root',
+-  imports: [Booking, Appointments, AuthDialog],
++  imports: [Booking, Appointments, Admin, AuthDialog],
+   template: `
+     <header class="top"><div class="wrap top__in">
+       <a class="brand" href="#" aria-label="Fisio Clínica, início" (click)="$event.preventDefault(); view.set('agendar')"><span class="loops" aria-hidden="true"></span>fisioclínica</a>
+       <nav class="tabs" aria-label="Navegação principal">
+         <button [attr.aria-current]="view() === 'agendar' ? 'page' : null" (click)="view.set('agendar')">Agendar sessão</button>
+         <button [attr.aria-current]="view() === 'meus' ? 'page' : null" (click)="showMine()">Meus agendamentos</button>
++        @if (isAdmin) { <button [attr.aria-current]="view() === 'admin' ? 'page' : null" (click)="view.set('admin')">Administração</button> }
+       </nav>
+       @if (api.session(); as s) {
+         <div class="who"><span>{{ s.usuario.nome.split(' ')[0] }}</span><button class="icon" title="Sair" aria-label="Sair da conta" (click)="logout()"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path [attr.d]="ic.logout" /></svg></button></div>
+@@ -23,6 +25,8 @@ import { ICONS } from './icons';
+       @if (notice()) { <div class="notice" role="status"><span>{{ notice() }}</span><button class="icon" aria-label="Dispensar mensagem" (click)="notice.set('')"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path [attr.d]="ic.close" /></svg></button></div> }
+       @if (view() === 'agendar') {
+         <app-booking [rescheduling]="rescheduling()" [refresh]="refresh()" (needLogin)="auth.set({ mode: 'login' })" (booked)="booked($event)" (cancelReschedule)="rescheduling.set(null)" />
++      } @else if (view() === 'admin' && isAdmin) {
++        <app-admin />
+       } @else {
+         <app-appointments [refresh]="refresh()" (reschedule)="startReschedule($event)" (notice)="notice.set($event)" (browse)="view.set('agendar')" />
+       }
+@@ -34,7 +38,8 @@ import { ICONS } from './icons';
+ export class App {
+   protected api = inject(Api);
+   protected ic = ICONS;
+-  view = signal<'agendar' | 'meus'>('agendar');
++  view = signal<'agendar' | 'meus' | 'admin'>('agendar');
++  protected get isAdmin() { return this.api.session()?.usuario.papel === 'ADMIN'; }
+   notice = signal('');
+   auth = signal<{ mode: AuthMode; token?: string } | null>(null);
+   rescheduling = signal<Appointment | null>(null);
+diff --git a/frontend/src/styles.css b/frontend/src/styles.css
+index a7c614d..3ec30e0 100644
+--- a/frontend/src/styles.css
++++ b/frontend/src/styles.css
+@@ -129,13 +129,22 @@ button:disabled { cursor: not-allowed; opacity: .5; }
+ .facts dt { font-size: .85rem; color: var(--suave); }
+ .facts dd { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+ .field { display: grid; gap: 6px; margin-bottom: 14px; font-size: .9rem; font-weight: 500; }
+-.field input, .field textarea { width: 100%; min-height: 46px; padding: 10px 12px; border: 1.5px solid #b4bfc9; border-radius: 8px; background: var(--branco); }
++.field input, .field textarea, .field select { width: 100%; min-height: 46px; padding: 10px 12px; border: 1.5px solid #b4bfc9; border-radius: 8px; background: var(--branco); }
+ .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+ .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 16px 0; padding: 4px; border-radius: 10px; background: var(--papel); }
+ .seg button { min-height: 40px; border: 0; border-radius: 8px; background: none; color: var(--suave); font-weight: 500; }
+ .seg .is-on { background: var(--branco); color: var(--tinta); font-weight: 600; box-shadow: 0 1px 4px #1b243026; }
+ .okmsg { margin-bottom: 12px; padding: 10px 14px; border-radius: 10px; background: #e1f2e9; color: #14452c; }
+ 
++/* Administração */
++.adm { max-width: 900px; }
++.adm .seg { max-width: 520px; grid-template-columns: repeat(3, 1fr); margin: 16px 0; }
++.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; align-items: end; margin: 8px 0 4px; }
++.form-grid .field { margin-bottom: 0; }
++.row--time .when strong { font-size: 1.4rem; }
++.row--simple { grid-template-columns: minmax(0, 1fr); padding: 14px 0; }
++.adm .dayline { margin-top: 28px; }
++
+ /* Meus agendamentos */
+ .mine { max-width: 800px; }
+ .mine h1 { padding-bottom: 14px; border-bottom: 2px solid var(--tinta); font-size: clamp(1.7rem, 3.4vw, 2.4rem); font-weight: 700; letter-spacing: -.025em; }
+@@ -157,7 +166,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
+   .brand { min-height: 56px; }
+   .who, .top__in > .btn { margin-left: auto; }
+   .tabs { order: 3; width: 100%; margin-left: 0; gap: 0; }
+-  .tabs button { flex: 1; min-height: 46px; }
++  .tabs button { flex: 1; min-height: 46px; padding: 0 4px; font-size: .85rem; white-space: nowrap; }
+   .week { grid-template-columns: auto minmax(0, 1fr) auto; }
+   .other { grid-column: 1 / -1; }
+   .days { display: flex; overflow-x: auto; scroll-snap-type: x proximity; padding-bottom: 4px; }
+-- 
+2.43.0
+

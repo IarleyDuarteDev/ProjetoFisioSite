@@ -262,4 +262,33 @@ class ApiIntegrationTest {
         mvc.perform(post("/admin/profissionais").header("Authorization", bearer(bia)).contentType(MediaType.APPLICATION_JSON)
                 .content("{\"nome\":\"X\",\"especialidade\":\"Y\"}")).andExpect(status().isForbidden());
     }
+
+    /** Troca a validação real do Google/Apple por uma falsa: o token de teste é "sub|email|verificado|nome". */
+    @org.springframework.boot.test.context.TestConfiguration
+    static class VerificadorFalso {
+        @org.springframework.context.annotation.Bean @org.springframework.context.annotation.Primary
+        br.com.fisioclinica.service.VerificadorIdentidade verificador() {
+            return (provedor, token) -> {
+                String[] p = token.split("\\|", -1);
+                return new br.com.fisioclinica.service.VerificadorIdentidade.Identidade(provedor, p[0], p[1], Boolean.parseBoolean(p[2]), p[3].isEmpty() ? null : p[3]);
+            };
+        }
+    }
+    @Test void loginComGoogleCriaContaReconheceDepoisERecusaEmailNaoVerificado() throws Exception {
+        String corpo = "{\"token\":\"sub-g1|gente@example.com|true|Gente Boa\"}";
+        var primeira = json(mvc.perform(post("/auth/google").contentType(MediaType.APPLICATION_JSON).content(corpo)).andExpect(status().isOk()).andReturn());
+        assertThat(primeira.get("usuario").get("cpfPendente").asBoolean()).isTrue();
+        assertThat(primeira.get("usuario").get("papel").asText()).isEqualTo("CLIENTE");
+        var segunda = json(mvc.perform(post("/auth/google").contentType(MediaType.APPLICATION_JSON).content(corpo)).andExpect(status().isOk()).andReturn());
+        assertThat(segunda.get("usuario").get("id").asText()).isEqualTo(primeira.get("usuario").get("id").asText());
+        mvc.perform(post("/auth/google").contentType(MediaType.APPLICATION_JSON).content("{\"token\":\"sub-g2|outra@example.com|false|\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+    @Test void loginSocialEmContaComSenhaNaoVerificadaTrocaASenhaEDerrubaSessoes() throws Exception {
+        mvc.perform(post("/auth/google").contentType(MediaType.APPLICATION_JSON).content("{\"token\":\"sub-a|alice@example.com|true|Alice\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.usuario.email").value("alice@example.com"));
+        mvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON).content("{\"email\":\"alice@example.com\",\"senha\":\"senha-segura-123\"}"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/agendamentos/meus").header("Authorization", bearer(alice))).andExpect(status().isUnauthorized());
+    }
 }

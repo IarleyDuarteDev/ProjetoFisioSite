@@ -18,6 +18,8 @@ public class Usuario {
     private long tokenVersion;
     @Enumerated(EnumType.STRING) @Column(nullable = false, length = 10)
     private Papel papel = Papel.CLIENTE;
+    @Column(nullable = false)
+    private boolean emailVerificado;
     @Column(length = 200)
     private String cpfCifrado;
     @Column(length = 64)
