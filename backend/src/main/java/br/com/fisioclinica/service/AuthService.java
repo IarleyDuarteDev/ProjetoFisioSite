@@ -70,6 +70,11 @@ public class AuthService {
         limitador.sucesso(chave);
         return tokens.criar(usuario.get());
     }
+    /** Sair de verdade: invalida todos os tokens desta conta, inclusive o que acabou de ser usado. */
+    @Transactional
+    public void sair(UUID usuarioId) {
+        usuarios.findLockedById(usuarioId).ifPresent(u -> u.setTokenVersion(u.getTokenVersion() + 1));
+    }
     /** Contas antigas, sem CPF, informam o CPF uma única vez; depois ele não pode ser trocado por aqui. */
     @Transactional
     public Cliente informarCpf(UUID usuarioId, InformarCpf dto) {

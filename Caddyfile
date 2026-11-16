@@ -1,0 +1,6 @@
+# HTTPS automático (Let's Encrypt) para o domínio definido em DOMINIO. O Caddy também redireciona http para https.
+{$DOMINIO} {
+	encode zstd gzip
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	reverse_proxy frontend:80
+}

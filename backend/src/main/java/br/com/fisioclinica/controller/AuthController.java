@@ -23,6 +23,8 @@ public class AuthController {
     public Map<String, String> provedores() { return social.provedores(); }
     @PostMapping("/confirm-email")
     public Confirmado confirmarEmail(@Valid @RequestBody ConfirmarEmail dto) { return auth.confirmarEmail(dto); }
+    @PostMapping("/logout") @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void sair(@AuthenticationPrincipal Jwt jwt) { auth.sair(UUID.fromString(jwt.getSubject())); }
     @PostMapping("/resend-confirmation")
     public void reenviarConfirmacao(@AuthenticationPrincipal Jwt jwt) { auth.reenviarConfirmacao(UUID.fromString(jwt.getSubject())); }
     @PostMapping("/google")

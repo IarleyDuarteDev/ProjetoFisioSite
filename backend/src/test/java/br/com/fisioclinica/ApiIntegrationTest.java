@@ -44,6 +44,7 @@ class ApiIntegrationTest {
         registry.add("app.jwt.secret", () -> "integration-tests-only-secret-with-at-least-32-bytes");
         registry.add("app.cpf.key", () -> "integration-tests-only-cpf-key-with-at-least-32-bytes");
         registry.add("app.demo-data", () -> false);
+        registry.add("app.limites.ativo", () -> false); // o limite por IP tem teste próprio
         registry.add("springdoc.api-docs.enabled", () -> true); // desligada por padrão; o teste do esquema Bearer precisa dela
     }
     @Autowired MockMvc mvc;
@@ -322,5 +323,10 @@ class ApiIntegrationTest {
         mvc.perform(post("/auth/reset-password").contentType(MediaType.APPLICATION_JSON)
                 .content(mapper.writeValueAsString(Map.of("token", captor.getValue(), "novaSenha", "nova-senha-123")))).andExpect(status().isOk());
         assertThat(jdbc.queryForObject("select email_verificado from fisio.usuarios where email = 'alice@example.com'", Boolean.class)).isTrue();
+    }
+    @Test void sairInvalidaOTokenNoServidor() throws Exception {
+        mvc.perform(get("/agendamentos/meus").header("Authorization", bearer(alice))).andExpect(status().isOk());
+        mvc.perform(post("/auth/logout").header("Authorization", bearer(alice))).andExpect(status().isNoContent());
+        mvc.perform(get("/agendamentos/meus").header("Authorization", bearer(alice))).andExpect(status().isUnauthorized());
     }
 }

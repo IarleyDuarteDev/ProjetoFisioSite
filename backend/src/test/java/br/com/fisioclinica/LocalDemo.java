@@ -22,6 +22,7 @@ public class LocalDemo {
         properties.setProperty("app.jwt.secret", Base64.getEncoder().encodeToString(secret));
         properties.setProperty("app.cpf.key", Base64.getEncoder().encodeToString(secret));
         properties.setProperty("app.demo-data", "true");
+        properties.setProperty("app.limites.ativo", "false");
         properties.forEach((key, value) -> System.setProperty(key.toString(), value.toString()));
         app.run(args);
     }

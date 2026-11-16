@@ -36,10 +36,14 @@ spring:
       fail-on-unknown-properties: true
 server:
   port: ${PORT:8080}
+  forward-headers-strategy: native # IP real vindo de X-Forwarded-For, só de proxies da rede privada
   error:
     include-message: never
     include-stacktrace: never
 app:
+  producao: ${APP_PRODUCAO:false}
+  limites:
+    ativo: ${LIMITES_ATIVO:true}
   jwt:
     secret: ${JWT_SECRET}
     issuer: fisio-api

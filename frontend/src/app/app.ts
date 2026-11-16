@@ -73,7 +73,9 @@ export class App {
     catch (e) { this.notice.set((e as Error).message); }
   }
   login(s: Session) { this.api.session.set(s); this.auth.set(null); this.notice.set(`Bem-vindo(a), ${s.usuario.nome.split(' ')[0]}! Escolha seu horário para continuar.`); }
-  logout() { this.api.session.set(null); this.view.set('agendar'); this.rescheduling.set(null); this.notice.set('Você saiu da sua conta.'); }
+  logout() {
+    this.api.request('POST', '/auth/logout').subscribe({ error: () => undefined }); // invalida o token no servidor antes de esquecê-lo aqui
+    this.api.session.set(null); this.view.set('agendar'); this.rescheduling.set(null); this.notice.set('Você saiu da sua conta.'); }
   showMine() { if (!this.api.session()) { this.auth.set({ mode: 'login' }); return; } this.rescheduling.set(null); this.view.set('meus'); }
   startReschedule(a: Appointment) { this.rescheduling.set(a); this.view.set('agendar'); this.notice.set('Escolha um novo horário. Sua sessão atual permanece reservada até a confirmação.'); }
   booked(message: string) { this.notice.set(message); this.rescheduling.set(null); this.view.set('meus'); this.refresh.update(n => n + 1); }
