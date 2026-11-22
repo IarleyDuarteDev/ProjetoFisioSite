@@ -15,6 +15,9 @@ public interface AgendamentoRepository extends JpaRepository<Agendamento, UUID> 
 
     boolean existsByHorarioId(UUID horarioId);
 
+    @Query("select count(a) from Agendamento a where a.cliente.id = :clienteId and a.status = :status and a.horario.data >= :hoje")
+    long contarFuturosConfirmados(UUID clienteId, StatusAgendamento status, LocalDate hoje);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select a from Agendamento a where a.id = :id")
     Optional<Agendamento> findLockedById(UUID id);

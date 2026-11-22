@@ -7,6 +7,7 @@ import java.util.*;
 
 public interface UsuarioRepository extends JpaRepository<Usuario, UUID> {
     Optional<Usuario> findByEmail(String email);
+    List<Usuario> findByPapelAndEmailNot(Papel papel, String email);
     boolean existsByEmail(String email);
     boolean existsByCpfHash(String cpfHash);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
