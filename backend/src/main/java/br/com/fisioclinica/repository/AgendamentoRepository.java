@@ -5,6 +5,8 @@ import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.*;
 import org.springframework.data.jpa.repository.*;
 import java.util.*;
+import java.time.LocalDate;
+import br.com.fisioclinica.model.StatusAgendamento;
 
 public interface AgendamentoRepository extends JpaRepository<Agendamento, UUID> {
     @EntityGraph(attributePaths = {"horario", "horario.profissional"})
