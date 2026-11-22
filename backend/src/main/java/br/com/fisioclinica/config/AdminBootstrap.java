@@ -35,6 +35,14 @@ public class AdminBootstrap implements CommandLineRunner {
             novo.setEmail(email);
             return novo;
         });
+        // Só o e-mail configurado administra: quem era admin antes perde o papel e as sessões caem.
+        var antigos = usuarios.findByPapelAndEmailNot(Papel.ADMIN, email);
+        for (var antigo : antigos) {
+            antigo.setPapel(Papel.CLIENTE);
+            antigo.setTokenVersion(antigo.getTokenVersion() + 1);
+            log.warn("Conta {} deixou de ser administradora porque ADMIN_EMAIL mudou.", antigo.getId());
+        }
+        usuarios.saveAll(antigos);
         if (usuario.getPapel() == Papel.ADMIN) return;
         usuario.setPapel(Papel.ADMIN);
         usuario.setSenhaHash(encoder.encode(UUID.randomUUID().toString()));

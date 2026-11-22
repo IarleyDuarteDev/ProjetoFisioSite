@@ -7,6 +7,7 @@ import jakarta.servlet.http.*;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.UrlPathHelper;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
@@ -26,6 +27,8 @@ public class LimiteDeRequisicoes extends OncePerRequestFilter {
             new Regra("/auth/login", 30, Duration.ofMinutes(15)),
             new Regra("/auth/google", 30, Duration.ofMinutes(15)),
             new Regra("/auth/apple", 30, Duration.ofMinutes(15)));
+    /** Decodifica a URL como o Spring MVC faz: "/auth/%6cogin" e "/auth/login" são a mesma rota e dividem a mesma cota. */
+    private static final UrlPathHelper CAMINHOS = new UrlPathHelper();
     private final LimitadorJanela limitador;
 
     public LimiteDeRequisicoes(LimitadorJanela limitador) { this.limitador = limitador; }
@@ -33,8 +36,9 @@ public class LimiteDeRequisicoes extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
         if ("POST".equals(request.getMethod())) {
+            String caminho = CAMINHOS.getPathWithinApplication(request);
             for (Regra regra : REGRAS) {
-                if (!regra.caminho().equals(request.getRequestURI())) continue;
+                if (!regra.caminho().equals(caminho)) continue;
                 if (!limitador.permitir(regra.caminho() + "|" + request.getRemoteAddr(), regra.maximo(), regra.janela())) {
                     response.setStatus(429);
                     response.setContentType("application/json;charset=UTF-8");

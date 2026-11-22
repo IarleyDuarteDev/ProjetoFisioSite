@@ -5,6 +5,8 @@ import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.*;
 import org.springframework.data.jpa.repository.*;
 import java.util.*;
+import java.time.LocalDate;
+import br.com.fisioclinica.model.StatusAgendamento;
 
 public interface AgendamentoRepository extends JpaRepository<Agendamento, UUID> {
     @EntityGraph(attributePaths = {"horario", "horario.profissional"})
@@ -14,6 +16,9 @@ public interface AgendamentoRepository extends JpaRepository<Agendamento, UUID> 
     Page<Agendamento> findAllBy(Pageable pageable);
 
     boolean existsByHorarioId(UUID horarioId);
+
+    @Query("select count(a) from Agendamento a where a.cliente.id = :clienteId and a.status = :status and a.horario.data >= :hoje")
+    long contarFuturosConfirmados(UUID clienteId, StatusAgendamento status, LocalDate hoje);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select a from Agendamento a where a.id = :id")

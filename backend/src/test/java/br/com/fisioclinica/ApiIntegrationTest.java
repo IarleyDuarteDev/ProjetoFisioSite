@@ -329,4 +329,14 @@ class ApiIntegrationTest {
         mvc.perform(post("/auth/logout").header("Authorization", bearer(alice))).andExpect(status().isNoContent());
         mvc.perform(get("/agendamentos/meus").header("Authorization", bearer(alice))).andExpect(status().isUnauthorized());
     }
+    @org.springframework.beans.factory.annotation.Autowired br.com.fisioclinica.repository.UsuarioRepository usuariosRepo;
+    @org.springframework.beans.factory.annotation.Autowired org.springframework.security.crypto.password.PasswordEncoder encoderTeste;
+
+    @Test void mudarOAdminEmailRetiraOPapelDoAdminAnterior() throws Exception {
+        jdbc.update("update fisio.usuarios set papel = 'ADMIN' where email = 'alice@example.com'");
+        new br.com.fisioclinica.config.AdminBootstrap(usuariosRepo, encoderTeste, "novo.admin@example.com").run();
+        assertThat(jdbc.queryForObject("select papel from fisio.usuarios where email = 'alice@example.com'", String.class)).isEqualTo("CLIENTE");
+        assertThat(jdbc.queryForObject("select papel from fisio.usuarios where email = 'novo.admin@example.com'", String.class)).isEqualTo("ADMIN");
+        mvc.perform(get("/admin/agendamentos").header("Authorization", bearer(alice))).andExpect(status().isUnauthorized()); // sessão antiga caiu
+    }
 }

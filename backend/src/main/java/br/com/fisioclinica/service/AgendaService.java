@@ -19,6 +19,8 @@ public class AgendaService {
     private final UsuarioRepository usuarios;
     private final ProfissionalRepository profissionais;
     private final Clock clock;
+    /** Impede que uma única conta ocupe a agenda inteira. */
+    private static final int MAXIMO_FUTUROS = 3;
 
     @Transactional(readOnly = true)
     public List<ProfissionalResposta> profissionais() {
@@ -47,6 +49,9 @@ public class AgendaService {
             throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "Confirme seu e-mail para agendar.");
         if (cliente.getPapel() == Papel.CLIENTE && cliente.getCpfHash() == null)
             throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "Informe seu CPF para agendar.");
+        if (cliente.getPapel() == Papel.CLIENTE
+                && agendamentos.contarFuturosConfirmados(clienteId, StatusAgendamento.CONFIRMADO, LocalDate.now(clock)) >= MAXIMO_FUTUROS)
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "Você já tem " + MAXIMO_FUTUROS + " agendamentos futuros. Cancele um ou aguarde uma sessão acontecer para marcar outro.");
         reserva.setCliente(cliente);
         reserva.setHorario(horario);
         reserva.setObservacoes(dto.observacoes());
